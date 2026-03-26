@@ -1,0 +1,1879 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SyncBoard — App</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap"
+    rel="stylesheet" />
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: #0d0f14;
+      color: #e2e8f0;
+      margin: 0;
+    }
+
+    h1,
+    h2,
+    h3,
+    .font-display {
+      font-family: 'Syne', sans-serif;
+    }
+
+    ::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #1a1d27;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #7c3aed;
+      border-radius: 2px;
+    }
+
+    .glass {
+      background: rgba(255, 255, 255, 0.04);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .glass-hover:hover {
+      background: rgba(255, 255, 255, 0.07);
+      border-color: rgba(124, 58, 237, 0.3);
+      transition: all 0.2s;
+    }
+
+    .sidebar-link {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      border-radius: 10px;
+      cursor: pointer;
+      color: #94a3b8;
+      transition: all 0.2s;
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .sidebar-link:hover {
+      background: rgba(124, 58, 237, 0.15);
+      color: #c4b5fd;
+    }
+
+    .sidebar-link.active {
+      background: rgba(124, 58, 237, 0.2);
+      color: #a78bfa;
+    }
+
+    .sidebar-link svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+    }
+
+    .page {
+      display: none;
+    }
+
+    .page.active {
+      display: block;
+    }
+
+    .stat-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      padding: 20px 24px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .badge-planned {
+      background: rgba(59, 130, 246, 0.15);
+      color: #60a5fa;
+    }
+
+    .badge-progress {
+      background: rgba(245, 158, 11, 0.15);
+      color: #fbbf24;
+    }
+
+    .badge-done {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #7c3aed, #6d28d9);
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+      font-family: 'DM Sans', sans-serif;
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+      transform: translateY(-1px);
+    }
+
+    .btn-ghost {
+      background: rgba(255, 255, 255, 0.06);
+      color: #e2e8f0;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 10px 20px;
+      border-radius: 10px;
+      font-weight: 500;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+      font-family: 'DM Sans', sans-serif;
+    }
+
+    .btn-ghost:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.2);
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-weight: 500;
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.2s;
+      font-family: 'DM Sans', sans-serif;
+    }
+
+    .btn-danger:hover {
+      background: rgba(239, 68, 68, 0.25);
+    }
+
+    .input {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #e2e8f0;
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 14px;
+      width: 100%;
+      outline: none;
+      font-family: 'DM Sans', sans-serif;
+      transition: all 0.2s;
+    }
+
+    .input:focus {
+      border-color: #7c3aed;
+      background: rgba(124, 58, 237, 0.08);
+    }
+
+    .input::placeholder {
+      color: #64748b;
+    }
+
+    label {
+      font-size: 13px;
+      color: #94a3b8;
+      font-weight: 500;
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+      z-index: 50;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-overlay.open {
+      display: flex;
+    }
+
+    .modal {
+      background: #13151d;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 20px;
+      padding: 28px;
+      width: 100%;
+      max-width: 460px;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 100;
+      background: #1e2130;
+      border: 1px solid rgba(124, 58, 237, 0.4);
+      color: #e2e8f0;
+      padding: 14px 20px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 500;
+      transform: translateY(80px);
+      opacity: 0;
+      transition: all 0.3s;
+      max-width: 320px;
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    .toast.success {
+      border-color: rgba(16, 185, 129, 0.4);
+    }
+
+    .toast.error {
+      border-color: rgba(239, 68, 68, 0.4);
+    }
+
+    .task-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 14px;
+      padding: 18px 20px;
+      transition: all 0.2s;
+    }
+
+    .task-card:hover {
+      border-color: rgba(124, 58, 237, 0.3);
+      background: rgba(124, 58, 237, 0.04);
+    }
+
+    .team-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      padding: 24px;
+      transition: all 0.2s;
+      cursor: pointer;
+    }
+
+    .team-card:hover {
+      border-color: rgba(124, 58, 237, 0.4);
+      background: rgba(124, 58, 237, 0.06);
+    }
+
+    .note-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 14px;
+      padding: 20px;
+      transition: all 0.2s;
+      cursor: pointer;
+    }
+
+    .note-card:hover {
+      border-color: rgba(124, 58, 237, 0.3);
+    }
+
+    .note-card.selected {
+      border-color: #7c3aed;
+      background: rgba(124, 58, 237, 0.08);
+    }
+
+    .avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #7c3aed, #4f46e5);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      color: white;
+      flex-shrink: 0;
+    }
+
+    .progress-bar {
+      height: 6px;
+      border-radius: 3px;
+      background: rgba(255, 255, 255, 0.08);
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      border-radius: 3px;
+      background: linear-gradient(90deg, #7c3aed, #a78bfa);
+      transition: width 0.5s;
+    }
+
+    .timeline-bar {
+      height: 28px;
+      border-radius: 6px;
+      background: linear-gradient(90deg, #7c3aed, #a78bfa);
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      font-size: 11px;
+      font-weight: 600;
+      color: white;
+      white-space: nowrap;
+      overflow: hidden;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    .timeline-bar:hover {
+      opacity: 0.85;
+    }
+
+    #app {
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .search-result {
+      padding: 12px 16px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .search-result:hover {
+      background: rgba(124, 58, 237, 0.15);
+    }
+
+    .donut-ring {
+      transform-origin: center;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .spinner {
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(8px)
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0)
+      }
+    }
+
+    .fade-in {
+      animation: fadeIn 0.25s ease forwards;
+    }
+
+    .connected-dot {
+      width: 8px;
+      height: 8px;
+      background: #10b981;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+      box-shadow: 0 0 8px #10b981;
+    }
+  </style>
+</head>
+
+<body>
+
+
+
+  <!-- ═══════════════════════════════════════════════
+     MAIN APP
+═══════════════════════════════════════════════ -->
+  <div id="app">
+    <!-- Sidebar -->
+    <aside
+      style="width:240px;min-width:240px;background:#0f111a;border-right:1px solid rgba(255,255,255,0.06);display:flex;flex-direction:column;padding:16px 12px;height:100vh;">
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 8px 24px;">
+        <div
+          style="width:36px;height:36px;background:linear-gradient(135deg,#7c3aed,#4f46e5);border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <svg width="20" height="20" fill="white" viewBox="0 0 24 24">
+            <path
+              d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </div>
+        <span style="font-family:'Syne',sans-serif;font-size:18px;font-weight:700;">SyncBoard</span>
+      </div>
+
+      <nav style="flex:1;display:flex;flex-direction:column;gap:2px;">
+        <div class="sidebar-link active" onclick="nav('dashboard')" id="nav-dashboard">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <rect x="3" y="3" width="7" height="7" rx="1" />
+            <rect x="14" y="3" width="7" height="7" rx="1" />
+            <rect x="3" y="14" width="7" height="7" rx="1" />
+            <rect x="14" y="14" width="7" height="7" rx="1" />
+          </svg>
+          Dashboard
+        </div>
+        <div class="sidebar-link" onclick="nav('teams')" id="nav-teams">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path
+              d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          Teams
+        </div>
+        <div class="sidebar-link" onclick="nav('tasks')" id="nav-tasks">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path
+              d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+          </svg>
+          Tasks
+        </div>
+        <div class="sidebar-link" onclick="nav('analytics')" id="nav-analytics">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path
+              d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+          </svg>
+          Analytics
+        </div>
+        <div class="sidebar-link" onclick="nav('timeline')" id="nav-timeline">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+            <line x1="16" y1="2" x2="16" y2="6" />
+            <line x1="8" y1="2" x2="8" y2="6" />
+            <line x1="3" y1="10" x2="21" y2="10" />
+          </svg>
+          Timeline
+        </div>
+        <div class="sidebar-link" onclick="nav('notes')" id="nav-notes">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path
+              d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+          </svg>
+          Notes
+        </div>
+        <div class="sidebar-link" onclick="nav('files')" id="nav-files">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+          </svg>
+          Files
+        </div>
+        <div class="sidebar-link" onclick="nav('search')" id="nav-search">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          Search
+        </div>
+        <div class="sidebar-link" onclick="nav('github')" id="nav-github">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22"/></svg>
+          GitHub
+        </div>
+      </nav>
+
+      <!-- Notification Bell -->
+      <div style="padding:0 8px;margin-bottom:4px;">
+        <div onclick="toggleNotifications()" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;cursor:pointer;transition:all 0.2s;position:relative;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
+          <span style="font-size:14px;font-weight:500;">Notifications</span>
+          <span id="notif-badge" style="display:none;position:absolute;top:6px;left:24px;width:18px;height:18px;background:#ef4444;border-radius:50%;font-size:10px;font-weight:700;color:white;text-align:center;line-height:18px;">0</span>
+        </div>
+      </div>
+
+      <div style="border-top:1px solid rgba(255,255,255,0.06);padding-top:16px;margin-top:8px;">
+        <div id="connection-status"
+          style="font-size:12px;color:#64748b;display:flex;align-items:center;margin-bottom:12px;padding:0 8px;">
+          <span class="connected-dot" id="conn-dot" style="background:#ef4444;box-shadow:0 0 8px #ef4444;"></span>
+          <span id="conn-text">Connecting...</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 8px;border-radius:10px;">
+          <div class="avatar" id="sidebar-avatar">?</div>
+          <div style="flex:1;min-width:0;">
+            <p id="sidebar-name"
+              style="font-size:13px;font-weight:600;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+            </p>
+            <p id="sidebar-email"
+              style="font-size:11px;color:#64748b;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+            </p>
+          </div>
+          <button onclick="logout()" title="Logout"
+            style="background:none;border:none;color:#64748b;cursor:pointer;padding:4px;">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main style="flex:1;overflow-y:auto;height:100vh;padding:28px 32px;">
+
+      <!-- ── DASHBOARD ── -->
+      <div class="page active" id="page-dashboard">
+        <div style="margin-bottom:28px;">
+          <h1 style="font-size:28px;font-weight:800;margin-bottom:4px;">Welcome Back! 👋</h1>
+          <p style="color:#64748b;">Here's what's happening with your teams today.</p>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px;" id="dash-stats">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+          <div class="glass" style="border-radius:16px;padding:24px;">
+            <h3 style="font-family:'Syne',sans-serif;font-weight:700;margin-bottom:16px;">Recent Teams</h3>
+            <div id="dash-teams"></div>
+          </div>
+          <div class="glass" style="border-radius:16px;padding:24px;">
+            <h3 style="font-family:'Syne',sans-serif;font-weight:700;margin-bottom:16px;">Active Tasks</h3>
+            <div id="dash-tasks"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── TEAMS ── -->
+      <div class="page" id="page-teams">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;">
+          <div>
+            <h1 style="font-size:28px;font-weight:800;margin-bottom:4px;">Teams</h1>
+            <p style="color:#64748b;">Manage your teams and collaborate with members</p>
+          </div>
+          <div style="display:flex;gap:10px;">
+            <button class="btn-ghost" onclick="openJoinTeam()">Join Team</button>
+            <button class="btn-primary" onclick="openCreateTeam()">+ Create Team</button>
+          </div>
+        </div>
+        <div id="teams-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:20px;">
+        </div>
+      </div>
+
+      <!-- ── TASKS ── -->
+      <div class="page" id="page-tasks">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
+          <div>
+            <h1 style="font-size:28px;font-weight:800;margin-bottom:4px;">Tasks</h1>
+            <p style="color:#64748b;">Track and manage your team's work</p>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <select class="input" id="task-team-filter" style="width:auto;" onchange="loadTasks()">
+              <option value="">All Teams</option>
+            </select>
+            <button class="btn-primary" onclick="openCreateTask()">+ Create Task</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:20px;" id="task-filter-btns">
+          <button onclick="filterTasks('all')" id="tf-all"
+            style="padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid #7c3aed;background:#7c3aed;color:white;">All</button>
+          <button onclick="filterTasks('planned')" id="tf-planned"
+            style="padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#94a3b8;">Planned</button>
+          <button onclick="filterTasks('in progress')" id="tf-progress"
+            style="padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#94a3b8;">In
+            Progress</button>
+          <button onclick="filterTasks('done')" id="tf-done"
+            style="padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#94a3b8;">Done</button>
+        </div>
+        <div id="tasks-list" style="display:flex;flex-direction:column;gap:12px;"></div>
+      </div>
+
+      <!-- ── ANALYTICS ── -->
+      <div class="page" id="page-analytics">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;">
+          <div>
+            <h1 style="font-size:28px;font-weight:800;margin-bottom:4px;">Analytics</h1>
+            <p style="color:#64748b;">Track team performance and productivity</p>
+          </div>
+          <select class="input" id="analytics-team" style="width:auto;" onchange="loadAnalytics()">
+            <option value="">Select Team</option>
+          </select>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px;" id="analytics-stats">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+          <div class="glass" style="border-radius:16px;padding:24px;">
+            <h3 style="font-family:'Syne',sans-serif;font-weight:700;margin-bottom:20px;">Task Status Distribution</h3>
+            <div id="donut-chart" style="display:flex;flex-direction:column;align-items:center;gap:16px;"></div>
+          </div>
+          <div class="glass" style="border-radius:16px;padding:24px;">
+            <h3 style="font-family:'Syne',sans-serif;font-weight:700;margin-bottom:20px;">Member Workload</h3>
+            <div id="workload-chart"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── TIMELINE ── -->
+      <div class="page" id="page-timeline">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;">
+          <div>
+            <h1 style="font-size:28px;font-weight:800;margin-bottom:4px;">Timeline</h1>
+            <p style="color:#64748b;">Visual task scheduling and Gantt view</p>
+          </div>
+          <select class="input" id="timeline-team" style="width:auto;" onchange="loadTimeline()">
+            <option value="">Select Team</option>
+          </select>
+        </div>
+        <div class="glass" style="border-radius:16px;padding:24px;overflow-x:auto;" id="timeline-container"></div>
+      </div>
+
+      <!-- ── NOTES ── -->
+      <div class="page" id="page-notes">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
+          <div>
+            <h1 style="font-size:28px;font-weight:800;margin-bottom:4px;">Notes</h1>
+            <p style="color:#64748b;">Collaborative notes with auto-save</p>
+          </div>
+          <div style="display:flex;gap:10px;">
+            <select class="input" id="notes-team" style="width:auto;" onchange="loadNotes()">
+              <option value="">Select Team</option>
+            </select>
+            <button class="btn-primary" onclick="createNote()">+ New Note</button>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:280px 1fr;gap:20px;height:calc(100vh - 200px);">
+          <div id="notes-sidebar" style="display:flex;flex-direction:column;gap:10px;overflow-y:auto;"></div>
+          <div class="glass" style="border-radius:16px;padding:24px;display:flex;flex-direction:column;"
+            id="note-editor">
+            <div style="text-align:center;color:#64748b;margin:auto;">
+              <svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"
+                style="margin:0 auto 12px;display:block;opacity:0.4">
+                <path
+                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              <p>Select a note to edit</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── FILES ── -->
+      <div class="page" id="page-files">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;">
+          <div>
+            <h1 style="font-size:28px;font-weight:800;margin-bottom:4px;">Files</h1>
+            <p style="color:#64748b;">Share documents and files with your team</p>
+          </div>
+          <div style="display:flex;gap:10px;">
+            <select class="input" id="files-team" style="width:auto;" onchange="loadFiles()">
+              <option value="">Select Team</option>
+            </select>
+            <button class="btn-primary" onclick="openUploadFile()">↑ Upload File</button>
+          </div>
+        </div>
+        <div id="files-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;">
+        </div>
+      </div>
+
+      <!-- ── SEARCH ── -->
+      <div class="page" id="page-search">
+        <div style="margin-bottom:28px;">
+          <h1 style="font-size:28px;font-weight:800;margin-bottom:4px;">Search</h1>
+          <p style="color:#64748b;">Find tasks and notes instantly</p>
+        </div>
+        <input class="input" id="search-input" placeholder="Search tasks, notes..."
+          style="font-size:16px;padding:14px 18px;margin-bottom:24px;" oninput="doSearch()" />
+        <div id="search-results"></div>
+      </div>
+
+      <!-- ── GITHUB ── -->
+      <div class="page" id="page-github">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;">
+          <div>
+            <h1 style="font-size:28px;font-weight:800;margin-bottom:4px;">GitHub</h1>
+            <p style="color:#64748b;">Browse your team's repository</p>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <select class="input" id="github-team" style="width:auto;" onchange="loadGitHub()">
+              <option value="">Select Team</option>
+            </select>
+          </div>
+        </div>
+        <div id="github-connect" style="display:none;">
+          <div class="glass" style="border-radius:16px;padding:24px;margin-bottom:20px;">
+            <h3 style="font-family:'Syne',sans-serif;font-weight:700;margin-bottom:12px;">🔗 Link a GitHub Repository</h3>
+            <p style="color:#64748b;font-size:13px;margin-bottom:16px;">Only the team leader can link a repository. Paste a public GitHub repo URL.</p>
+            <div style="display:flex;gap:10px;">
+              <input class="input" id="github-repo-url" placeholder="https://github.com/owner/repo" style="flex:1;" />
+              <button class="btn-primary" onclick="linkGitHubRepo()">Link Repo</button>
+            </div>
+          </div>
+        </div>
+        <div id="github-browser" style="display:none;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap;" id="github-breadcrumb"></div>
+          <div style="display:grid;grid-template-columns:280px 1fr;gap:20px;height:calc(100vh - 260px);">
+            <div class="glass" style="border-radius:16px;padding:16px;overflow-y:auto;" id="github-file-list"></div>
+            <div class="glass" style="border-radius:16px;padding:24px;overflow:auto;" id="github-file-content">
+              <div style="text-align:center;color:#64748b;margin:auto;">
+                <svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" style="margin:0 auto 12px;display:block;opacity:0.4"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22"/></svg>
+                <p>Select a file to view its contents</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="github-empty" style="text-align:center;padding:60px;color:#64748b;">
+          <svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" style="margin:0 auto 12px;display:block;opacity:0.3"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22"/></svg>
+          <p>Select a team to browse its GitHub repository</p>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+<!-- Notification Panel (slide-out) -->
+<div id="notif-panel" style="display:none;position:fixed;top:0;left:240px;width:360px;height:100vh;background:#0f111a;border-right:1px solid rgba(255,255,255,0.08);z-index:100;box-shadow:4px 0 24px rgba(0,0,0,0.3);overflow-y:auto;">
+  <div style="padding:20px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <h3 style="font-family:'Syne',sans-serif;font-weight:700;font-size:18px;">Notifications</h3>
+      <div style="display:flex;gap:8px;">
+        <button onclick="markAllRead()" style="background:none;border:none;color:#a78bfa;cursor:pointer;font-size:12px;font-weight:600;">Mark all read</button>
+        <button onclick="toggleNotifications()" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:18px;">✕</button>
+      </div>
+    </div>
+    <div id="notif-list"></div>
+  </div>
+</div>
+
+  <!-- ═══════════════════════════════════════════════
+     MODALS
+═══════════════════════════════════════════════ -->
+
+  <!-- Create Team -->
+  <div class="modal-overlay" id="modal-create-team">
+    <div class="modal" style="position:relative;">
+      <button onclick="closeModal('modal-create-team')"
+        style="position:absolute;top:16px;right:16px;background:none;border:none;color:#64748b;cursor:pointer;font-size:20px;">✕</button>
+      <h2 style="font-family:'Syne',sans-serif;font-size:20px;font-weight:700;margin-bottom:20px;">Create Team</h2>
+      <div style="margin-bottom:14px;"><label>Team Name</label><input class="input" id="ct-name"
+          placeholder="e.g. Design Squad" /></div>
+      <div style="margin-bottom:20px;"><label>Description</label><input class="input" id="ct-desc"
+          placeholder="What's this team about?" /></div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn-ghost" style="flex:1;" onclick="closeModal('modal-create-team')">Cancel</button>
+        <button class="btn-primary" style="flex:1;" onclick="createTeam()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Join Team -->
+  <div class="modal-overlay" id="modal-join-team">
+    <div class="modal" style="position:relative;">
+      <button onclick="closeModal('modal-join-team')"
+        style="position:absolute;top:16px;right:16px;background:none;border:none;color:#64748b;cursor:pointer;font-size:20px;">✕</button>
+      <h2 style="font-family:'Syne',sans-serif;font-size:20px;font-weight:700;margin-bottom:20px;">Join Team</h2>
+      <div style="margin-bottom:20px;"><label>Invite Code</label><input class="input" id="jt-code"
+          placeholder="e.g. DESIGN42" /></div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn-ghost" style="flex:1;" onclick="closeModal('modal-join-team')">Cancel</button>
+        <button class="btn-primary" style="flex:1;" onclick="joinTeam()">Join</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Task -->
+  <div class="modal-overlay" id="modal-create-task">
+    <div class="modal" style="position:relative;">
+      <button onclick="closeModal('modal-create-task')"
+        style="position:absolute;top:16px;right:16px;background:none;border:none;color:#64748b;cursor:pointer;font-size:20px;">✕</button>
+      <h2 style="font-family:'Syne',sans-serif;font-size:20px;font-weight:700;margin-bottom:20px;">Create Task</h2>
+      <div style="margin-bottom:14px;"><label>Task Title</label><input class="input" id="new-task-title"
+          placeholder="e.g. Design landing page" /></div>
+      <div style="margin-bottom:14px;"><label>Description</label><input class="input" id="new-task-desc"
+          placeholder="Brief description..." /></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+        <div><label>Team</label>
+          <select class="input" id="new-task-team">
+            <option value="">Select team</option>
+          </select>
+        </div>
+        <div><label>Estimated Time (min)</label><input class="input" id="new-task-est" type="number" placeholder="60" />
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+        <div><label>Due Date</label><input class="input" id="new-task-due" type="date" /></div>
+        <div><label>Assign To</label>
+          <select class="input" id="new-task-assignee">
+            <option value="">Myself</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn-ghost" style="flex:1;" onclick="closeModal('modal-create-task')">Cancel</button>
+        <button class="btn-primary" style="flex:1;" onclick="submitCreateTask()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Upload File -->
+  <div class="modal-overlay" id="modal-upload-file">
+    <div class="modal" style="position:relative;max-width:520px;">
+      <button onclick="closeModal('modal-upload-file')"
+        style="position:absolute;top:16px;right:16px;background:none;border:none;color:#64748b;cursor:pointer;font-size:20px;">✕</button>
+      <h2 style="font-family:'Syne',sans-serif;font-size:20px;font-weight:700;margin-bottom:20px;">Upload File</h2>
+
+      <!-- Upload Tabs -->
+      <div
+        style="display:flex;gap:4px;margin-bottom:20px;background:rgba(255,255,255,0.04);border-radius:10px;padding:4px;">
+        <button onclick="switchUploadTab('file')" id="upload-tab-file"
+          style="flex:1;padding:8px 14px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:none;background:#7c3aed;color:white;font-family:'DM Sans',sans-serif;">From
+          PC</button>
+        <button onclick="switchUploadTab('url')" id="upload-tab-url"
+          style="flex:1;padding:8px 14px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:none;background:transparent;color:#94a3b8;font-family:'DM Sans',sans-serif;">From
+          URL</button>
+      </div>
+
+      <!-- File Upload Tab -->
+      <div id="upload-panel-file">
+        <div id="drop-zone"
+          style="border:2px dashed rgba(124,58,237,0.3);border-radius:16px;padding:40px 24px;text-align:center;cursor:pointer;transition:all 0.3s;margin-bottom:16px;background:rgba(124,58,237,0.03);"
+          onclick="document.getElementById('file-input').click()">
+          <input type="file" id="file-input" style="display:none;" onchange="handleFileSelect(event)" multiple />
+          <svg width="48" height="48" fill="none" stroke="#7c3aed" stroke-width="1.5" viewBox="0 0 24 24"
+            style="margin:0 auto 12px;display:block;opacity:0.7;">
+            <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+          </svg>
+          <p style="font-weight:600;margin:0 0 4px;color:#e2e8f0;">Drag & drop files here</p>
+          <p style="font-size:13px;color:#64748b;margin:0;">or click to browse • Max 50MB per file</p>
+        </div>
+        <div id="selected-files" style="display:none;margin-bottom:16px;"></div>
+      </div>
+
+      <!-- URL Import Tab -->
+      <div id="upload-panel-url" style="display:none;">
+        <div style="margin-bottom:16px;">
+          <label>File URL</label>
+          <input class="input" id="import-url-input" placeholder="https://example.com/document.pdf" />
+        </div>
+        <div
+          style="background:rgba(124,58,237,0.06);border:1px solid rgba(124,58,237,0.15);border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#a78bfa;display:flex;align-items:center;gap:8px;">
+          <span>💡</span>
+          <span>Paste a direct link to any file (PDF, image, ZIP, etc.)</span>
+        </div>
+      </div>
+
+      <!-- Upload Progress -->
+      <div id="upload-progress" style="display:none;margin-bottom:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <span style="font-size:13px;color:#e2e8f0;font-weight:600;" id="upload-progress-text">Uploading...</span>
+          <span style="font-size:12px;color:#64748b;" id="upload-progress-pct">0%</span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="upload-progress-bar" style="width:0%;"></div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:20px;"><label>Team</label>
+        <select class="input" id="uf-team">
+          <option value="">Select team</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn-ghost" style="flex:1;" onclick="closeModal('modal-upload-file')">Cancel</button>
+        <button class="btn-primary" style="flex:1;" id="upload-submit-btn" onclick="submitUpload()">Upload</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <!-- ═══════════════════════════════════════════════
+     JAVASCRIPT
+═══════════════════════════════════════════════ -->
+  <script>
+    const API = '';
+    let token = localStorage.getItem('ts_token');
+    let user = JSON.parse(localStorage.getItem('ts_user') || 'null');
+    let allTasks = [], allTeams = [], taskFilter = 'all';
+    let socket, noteAutoSaveTimer, selectedNote = null;
+    let allNotifications = [];
+
+    // ─── Init ────────────────────────────────────────────────────────────────────
+    window.onload = async () => {
+      if (!token) { window.location.href = '/login'; return; }
+      try {
+        const res = await fetch('/api/auth/me', { headers: { 'Authorization': 'Bearer ' + token } });
+        if (!res.ok) throw new Error();
+        user = await res.json();
+        localStorage.setItem('ts_user', JSON.stringify(user));
+        startApp();
+      } catch (e) {
+        localStorage.removeItem('ts_token'); localStorage.removeItem('ts_user');
+        window.location.href = '/login';
+      }
+    };
+
+    async function startApp() {
+      document.getElementById('sidebar-name').textContent = user.name;
+      document.getElementById('sidebar-email').textContent = user.email;
+      document.getElementById('sidebar-avatar').textContent = user.avatar;
+      initSocket();
+      loadNotifications();
+
+      // Auto-join team from invite link (?join=CODE)
+      const urlParams = new URLSearchParams(window.location.search);
+      const joinCode = urlParams.get('join');
+      if (joinCode) {
+        try {
+          const team = await api('/api/teams/join', 'POST', { code: joinCode.toUpperCase() });
+          if (team && !team.error) {
+            toast(`Joined ${team.name}! 🎉`);
+            // Clean up URL
+            window.history.replaceState({}, '', '/app');
+          }
+        } catch (e) { }
+      }
+
+      loadDashboard();
+    }
+
+    // ─── Socket ──────────────────────────────────────────────────────────────────
+    function initSocket() {
+      socket = io();
+      socket.on('connect', () => {
+        document.getElementById('conn-dot').style.cssText = 'background:#10b981;box-shadow:0 0 8px #10b981;';
+        document.getElementById('conn-text').textContent = 'Connected';
+      });
+      socket.on('disconnect', () => {
+        document.getElementById('conn-dot').style.cssText = 'background:#ef4444;box-shadow:0 0 8px #ef4444;';
+        document.getElementById('conn-text').textContent = 'Disconnected';
+      });
+      socket.on('task:created', t => { allTasks.push(t); refreshTaskViews(); });
+      socket.on('task:updated', t => { const i = allTasks.findIndex(x => x.id === t.id); if (i >= 0) allTasks[i] = t; refreshTaskViews(); });
+      socket.on('task:deleted', id => { allTasks = allTasks.filter(t => t.id !== id); refreshTaskViews(); });
+      socket.on('team:created', t => { allTeams.push(t); });
+      socket.on('file:uploaded', f => { if (document.getElementById('page-files').classList.contains('active')) loadFiles(); });
+      socket.on('notification:new', n => {
+        if (n.userId === user.id) loadNotifications();
+      });
+    }
+
+    // ─── Auth ────────────────────────────────────────────────────────────────────
+    function logout() {
+      token = null; user = null;
+      localStorage.removeItem('ts_token'); localStorage.removeItem('ts_user');
+      if (socket) socket.disconnect();
+      window.location.href = '/';
+    }
+
+    // ─── API Helper ──────────────────────────────────────────────────────────────
+    async function api(path, method = 'GET', body = null) {
+      const opts = { method, headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } };
+      if (body) opts.body = JSON.stringify(body);
+      const res = await fetch(API + path, opts);
+      if (res.status === 401) { logout(); return null; }
+      return res.json();
+    }
+
+    // ─── Navigation ──────────────────────────────────────────────────────────────
+    function nav(page) {
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('.sidebar-link').forEach(l => l.classList.remove('active'));
+      document.getElementById('page-' + page).classList.add('active');
+      const navEl = document.getElementById('nav-' + page);
+      if (navEl) navEl.classList.add('active');
+      const loaders = { dashboard: loadDashboard, teams: loadTeams, tasks: loadTasks, analytics: () => populateTeamSelect('analytics-team', loadAnalytics), timeline: () => populateTeamSelect('timeline-team', loadTimeline), notes: () => populateTeamSelect('notes-team', loadNotes), files: () => populateTeamSelect('files-team', loadFiles), search: () => { }, github: () => populateTeamSelect('github-team', loadGitHub) };
+      if (loaders[page]) loaders[page]();
+    }
+
+    // ─── Dashboard ───────────────────────────────────────────────────────────────
+    async function loadDashboard() {
+      const [teams, tasks] = await Promise.all([api('/api/teams'), api('/api/tasks')]);
+      if (!teams || !tasks) return;
+      allTeams = teams; allTasks = tasks;
+
+      const active = tasks.filter(t => t.status !== 'done');
+      const inProg = tasks.filter(t => t.status === 'in progress');
+      const done = tasks.filter(t => t.status === 'done');
+
+      document.getElementById('dash-stats').innerHTML = [
+        { label: 'Total Teams', val: teams.length, icon: '👥', color: '#7c3aed' },
+        { label: 'Active Tasks', val: active.length, icon: '✅', color: '#3b82f6' },
+        { label: 'In Progress', val: inProg.length, icon: '⏳', color: '#f59e0b' },
+        { label: 'Completed', val: done.length, icon: '🏆', color: '#10b981' }
+      ].map(s => `
+    <div class="stat-card" style="border-top:3px solid ${s.color}20;position:relative;overflow:hidden;">
+      <div style="font-size:32px;position:absolute;right:16px;top:16px;opacity:0.15;">${s.icon}</div>
+      <p style="font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">${s.label}</p>
+      <p style="font-size:36px;font-weight:800;font-family:'Syne',sans-serif;color:${s.color};">${s.val}</p>
+    </div>`).join('');
+
+      document.getElementById('dash-teams').innerHTML = teams.length ? teams.map(t => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+      <div><p style="font-weight:600;margin:0 0 2px;">${t.name}</p><p style="color:#64748b;font-size:12px;">${t.members.length} member${t.members.length !== 1 ? 's' : ''}</p></div>
+      <button class="btn-ghost" style="padding:6px 14px;font-size:12px;" onclick="nav('teams')">View</button>
+    </div>`).join('') : '<p style="color:#64748b;font-size:14px;">No teams yet</p>';
+
+      const activeTasks = tasks.filter(t => t.status !== 'done').slice(0, 5);
+      document.getElementById('dash-tasks').innerHTML = activeTasks.length ? activeTasks.map(t => `
+    <div style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+        <span class="badge badge-${t.status === 'in progress' ? 'progress' : 'planned'}">${t.status}</span>
+        <p style="font-weight:600;margin:0;font-size:14px;">${t.title}</p>
+      </div>
+      ${t.dueDate ? `<p style="color:#64748b;font-size:12px;margin:0;">Due: ${t.dueDate}</p>` : ''}
+    </div>`).join('') : '<p style="color:#64748b;font-size:14px;">No active tasks</p>';
+
+    // Deadline warnings on dashboard
+    const now = new Date();
+    const urgentTasks = tasks.filter(t => {
+      if (t.status === 'done' || !t.dueDate) return false;
+      const due = new Date(t.dueDate);
+      const hoursLeft = (due - now) / (1000 * 60 * 60);
+      return hoursLeft <= 48 && hoursLeft > -24;
+    }).sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+
+    const oldW = document.getElementById('dash-warnings');
+    if (oldW) oldW.remove();
+    if (urgentTasks.length) {
+      const wd = document.createElement('div');
+      wd.id = 'dash-warnings';
+      wd.className = 'glass';
+      wd.style.cssText = 'border-radius:16px;padding:24px;margin-top:20px;border:1px solid rgba(245,158,11,0.15);background:rgba(245,158,11,0.03);';
+      let whtml = '<h3 style="font-family:Syne,sans-serif;font-weight:700;margin-bottom:16px;color:#fbbf24;">\u26a0\ufe0f Deadline Warnings</h3>';
+      urgentTasks.forEach(t => {
+        const due = new Date(t.dueDate);
+        const hLeft = Math.max(0, Math.round((due - now) / 3600000));
+        const over = due < now;
+        const tm = teams.find(x => x.id === t.teamId);
+        whtml += '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.04);">';
+        whtml += '<div><p style="font-weight:600;margin:0 0 2px;font-size:14px;">' + t.title + '</p><p style="color:#64748b;font-size:12px;margin:0;">' + (tm ? tm.name : '') + '</p></div>';
+        whtml += '<span style="font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;' + (over ? 'background:rgba(239,68,68,0.15);color:#f87171;' : hLeft <= 12 ? 'background:rgba(245,158,11,0.15);color:#fbbf24;' : 'background:rgba(59,130,246,0.15);color:#60a5fa;') + '">' + (over ? 'OVERDUE' : hLeft + 'h left') + '</span>';
+        whtml += '</div>';
+      });
+      wd.innerHTML = whtml;
+      document.getElementById('page-dashboard').appendChild(wd);
+    }
+    }
+
+    // ─── Teams ───────────────────────────────────────────────────────────────────
+    async function loadTeams() {
+      const teams = await api('/api/teams');
+      if (!teams) return;
+      allTeams = teams;
+      document.getElementById('teams-grid').innerHTML = teams.map(t => `
+    <div class="team-card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+        <div class="avatar" style="width:44px;height:44px;border-radius:12px;font-size:14px;">${t.name.substring(0, 2).toUpperCase()}</div>
+        <div>
+          <h3 style="font-family:'Syne',sans-serif;font-weight:700;margin:0 0 2px;">${t.name}</h3>
+          <p style="color:#64748b;font-size:13px;margin:0;">${t.members.length} member${t.members.length !== 1 ? 's' : ''}</p>
+        </div>
+      </div>
+      <p style="color:#94a3b8;font-size:14px;margin-bottom:16px;">${t.description || 'No description'}</p>
+      <div style="display:flex;gap:-8px;margin-bottom:16px;">${t.members.slice(0, 5).map(m => `<div class="avatar" style="width:28px;height:28px;border-radius:8px;font-size:10px;margin-right:4px;" title="${m.name}">${m.avatar}</div>`).join('')}${t.members.length > 5 ? `<div style="color:#64748b;font-size:12px;margin-left:6px;align-self:center;">+${t.members.length - 5}</div>` : ''}</div>
+      <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <div><p style="font-size:11px;color:#64748b;margin:0 0 2px;">Invite Code</p><p style="font-family:'DM Sans',monospace;font-weight:700;font-size:15px;color:#a78bfa;margin:0;">${t.inviteCode}</p></div>
+        <button onclick="copyCode('${t.inviteCode}')" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:18px;" title="Copy code">⧉</button>
+      </div>
+      <button onclick="copyInviteLink('${t.inviteCode}')" style="width:100%;padding:8px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;background:rgba(124,58,237,0.12);color:#a78bfa;border:1px solid rgba(124,58,237,0.25);font-family:'DM Sans',sans-serif;transition:all 0.2s;display:flex;align-items:center;justify-content:center;gap:6px;"
+        onmouseover="this.style.background='rgba(124,58,237,0.2)'" onmouseout="this.style.background='rgba(124,58,237,0.12)'"
+      ><svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg> Copy Invite Link</button>
+      ${t.ownerId === user.id ? `<span style="display:inline-block;margin-top:10px;padding:3px 10px;border-radius:999px;background:rgba(124,58,237,0.2);color:#a78bfa;font-size:11px;font-weight:700;">Owner</span>` : ''}
+    </div>`).join('') || '<p style="color:#64748b;">No teams yet. Create or join one!</p>';
+    }
+
+    function copyCode(code) { navigator.clipboard.writeText(code).then(() => toast('Code copied!')); }
+    function copyInviteLink(code) { navigator.clipboard.writeText(window.location.origin + '/join/' + code).then(() => toast('Invite link copied! Share it with your team 🔗')); }
+    function openCreateTeam() { document.getElementById('modal-create-team').classList.add('open'); }
+    function openJoinTeam() { document.getElementById('modal-join-team').classList.add('open'); }
+    async function createTeam() {
+      const name = document.getElementById('ct-name').value.trim();
+      const description = document.getElementById('ct-desc').value.trim();
+      if (!name) return toast('Team name required', 'error');
+      const team = await api('/api/teams', 'POST', { name, description });
+      if (!team) return;
+      closeModal('modal-create-team');
+      document.getElementById('ct-name').value = ''; document.getElementById('ct-desc').value = '';
+      toast('Team created!'); allTeams.push(team); loadTeams();
+    }
+    async function joinTeam() {
+      const code = document.getElementById('jt-code').value.trim().toUpperCase();
+      if (!code) return toast('Enter an invite code', 'error');
+      const team = await api('/api/teams/join', 'POST', { code });
+      if (!team || team.error) return toast(team?.error || 'Invalid code', 'error');
+      closeModal('modal-join-team'); document.getElementById('jt-code').value = '';
+      toast('Joined ' + team.name + '!'); loadTeams();
+    }
+
+    // ─── Tasks ───────────────────────────────────────────────────────────────────
+    async function loadTasks() {
+      const teamId = document.getElementById('task-team-filter').value;
+      const url = teamId ? `/api/tasks?teamId=${teamId}` : '/api/tasks';
+      const tasks = await api(url);
+      if (!tasks) return;
+      allTasks = tasks;
+      if (!allTeams.length) { const t = await api('/api/teams'); if (t) allTeams = t; }
+      populateTeamFilter('task-team-filter', true);
+      renderTasks();
+    }
+
+    function populateTeamFilter(selectId, keepVal = false) {
+      const sel = document.getElementById(selectId);
+      const cur = sel.value;
+      const isTaskFilter = selectId === 'task-team-filter';
+      sel.innerHTML = isTaskFilter ? '<option value="">All Teams</option>' : '<option value="">Select Team</option>';
+      allTeams.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.id; opt.textContent = t.name;
+        sel.appendChild(opt);
+      });
+      if (keepVal) sel.value = cur;
+    }
+
+    function filterTasks(f) {
+      taskFilter = f;
+      ['all', 'planned', 'progress', 'done'].forEach(x => {
+        const id = 'tf-' + x; const el = document.getElementById(id);
+        if (!el) return;
+        const match = (x === 'progress' && f === 'in progress') || (x === f);
+        el.style.background = match ? '#7c3aed' : 'transparent';
+        el.style.color = match ? 'white' : '#94a3b8';
+        el.style.borderColor = match ? '#7c3aed' : 'rgba(255,255,255,0.1)';
+      });
+      renderTasks();
+    }
+
+    function renderTasks() {
+      const filtered = taskFilter === 'all' ? allTasks : allTasks.filter(t => t.status === taskFilter);
+      if (!filtered.length) { document.getElementById('tasks-list').innerHTML = '<div style="text-align:center;padding:48px;color:#64748b;">No tasks found</div>'; return; }
+      document.getElementById('tasks-list').innerHTML = filtered.map(t => {
+        const team = allTeams.find(tm => tm.id === t.teamId);
+        const pct = t.estimatedTime ? Math.min(100, Math.round(t.actualTime / t.estimatedTime * 100)) : 0;
+        return `<div class="task-card fade-in">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;">
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">
+            <span class="badge badge-${t.status === 'done' ? 'done' : t.status === 'in progress' ? 'progress' : 'planned'}">${t.status}</span>
+            ${t.timerRunning ? `<span style="background:rgba(239,68,68,0.15);color:#f87171;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;animation:pulse 2s infinite;">● TIMER ON</span>` : ''}
+            ${team ? `<span style="font-size:12px;color:#64748b;">${team.name}</span>` : ''}
+          </div>
+          <h3 style="font-weight:700;margin:0 0 4px;font-size:15px;">${t.title}</h3>
+          ${t.description ? `<p style="color:#64748b;font-size:13px;margin:0 0 12px;">${t.description}</p>` : ''}
+          <div style="display:flex;gap:20px;font-size:12px;color:#64748b;margin-bottom:${t.estimatedTime ? '12px' : '0'};">
+            <span>Est: ${t.estimatedTime || 0}m</span>
+            <span>Actual: ${t.actualTime || 0}m</span>
+            ${t.dueDate ? `<span>Due: ${t.dueDate}</span>` : ''}
+          </div>
+          ${t.estimatedTime ? `<div><div class="progress-bar"><div class="progress-fill" style="width:${pct}%;"></div></div><p style="font-size:11px;color:#64748b;margin-top:4px;">${pct}% of estimated time</p></div>` : ''}
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-shrink:0;">
+          ${t.status !== 'done' ? `
+            ${!t.timerRunning
+              ? `<button onclick="taskTimer('${t.id}','start')" style="padding:7px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.2);">▶ Start</button>`
+              : `<button onclick="taskTimer('${t.id}','stop')" style="padding:7px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;background:rgba(245,158,11,0.15);color:#fbbf24;border:1px solid rgba(245,158,11,0.2);">⏸ Stop</button>`}
+            <button onclick="taskTimer('${t.id}','complete')" style="padding:7px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;background:rgba(16,185,129,0.15);color:#34d399;border:1px solid rgba(16,185,129,0.2);">✓ Done</button>
+          ` : '<span style="color:#34d399;font-size:13px;font-weight:600;">✓ Completed</span>'}
+          <button onclick="deleteTask('${t.id}')" class="btn-danger" style="padding:7px 12px;">✕</button>
+        </div>
+      </div>
+    </div>`;
+      }).join('');
+    }
+
+    function refreshTaskViews() {
+      if (document.getElementById('page-tasks').classList.contains('active')) renderTasks();
+      if (document.getElementById('page-dashboard').classList.contains('active')) loadDashboard();
+    }
+
+    async function taskTimer(id, action) {
+      const res = await api(`/api/tasks/${id}/timer`, 'POST', { action });
+      if (!res) return;
+      const i = allTasks.findIndex(t => t.id === id);
+      if (i >= 0) allTasks[i] = res;
+      renderTasks();
+      toast(action === 'complete' ? 'Task completed! 🎉' : action === 'start' ? 'Timer started' : 'Timer stopped');
+    }
+
+    async function deleteTask(id) {
+      if (!confirm('Delete this task?')) return;
+      await api(`/api/tasks/${id}`, 'DELETE');
+      allTasks = allTasks.filter(t => t.id !== id);
+      renderTasks(); toast('Task deleted');
+    }
+
+    function openCreateTask() {
+      document.getElementById('modal-create-task').classList.add('open');
+      const sel = document.getElementById('new-task-team');
+      sel.innerHTML = '<option value="">Select team</option>';
+      allTeams.forEach(t => { sel.innerHTML += `<option value="${t.id}">${t.name}</option>`; });
+      // Clear assignee until team is selected
+      document.getElementById('new-task-assignee').innerHTML = '<option value="">Myself</option>';
+      sel.onchange = async function() {
+        const teamId = this.value;
+        const assigneeSel = document.getElementById('new-task-assignee');
+        assigneeSel.innerHTML = '<option value="">Myself</option>';
+        if (!teamId) return;
+        const members = await api(`/api/teams/${teamId}/members`);
+        if (!members) return;
+        const team = allTeams.find(t => t.id === teamId);
+        const isLeader = team && team.ownerId === user.id;
+        members.forEach(m => {
+          if (m.id === user.id) return; // Skip self
+          // Members can't assign to leaders
+          if (!isLeader && m.role === 'leader') return;
+          assigneeSel.innerHTML += `<option value="${m.id}">${m.name} ${m.role === 'leader' ? '(Leader)' : ''}</option>`;
+        });
+      };
+    }
+
+    async function submitCreateTask() {
+      const title = document.getElementById('new-task-title').value.trim();
+      const description = document.getElementById('new-task-desc').value.trim();
+      const teamId = document.getElementById('new-task-team').value;
+      const estimatedTime = parseInt(document.getElementById('new-task-est').value) || 60;
+      const dueDate = document.getElementById('new-task-due').value;
+      const assigneeId = document.getElementById('new-task-assignee').value || undefined;
+      if (!title || !teamId) return toast('Title and team are required', 'error');
+      const task = await api('/api/tasks', 'POST', { title, description, teamId, estimatedTime, dueDate, assigneeId, status: 'planned' });
+      if (!task || task.error) return toast(task?.error || 'Failed to create task', 'error');
+      closeModal('modal-create-task');
+      ['new-task-title', 'new-task-desc', 'new-task-est', 'new-task-due'].forEach(id => document.getElementById(id).value = '');
+      toast('Task created!');
+    }
+
+    // ─── Analytics ───────────────────────────────────────────────────────────────
+    async function populateTeamSelect(selectId, callback) {
+      if (!allTeams.length) { const t = await api('/api/teams'); if (t) { allTeams = t; } }
+      const sel = document.getElementById(selectId);
+      sel.innerHTML = '<option value="">Select Team</option>';
+      allTeams.forEach(t => { sel.innerHTML += `<option value="${t.id}">${t.name}</option>`; });
+      if (allTeams.length) { sel.value = allTeams[0].id; if (callback) callback(); }
+    }
+
+    async function loadAnalytics() {
+      const teamId = document.getElementById('analytics-team').value;
+      if (!teamId) return;
+      const stats = await api(`/api/analytics?teamId=${teamId}`);
+      if (!stats) return;
+
+      document.getElementById('analytics-stats').innerHTML = [
+        { label: 'Total Tasks', val: stats.total, color: '#7c3aed' },
+        { label: 'Completion Rate', val: stats.completionRate + '%', color: '#10b981' },
+        { label: 'In Progress', val: stats.inProgress, color: '#f59e0b' },
+        { label: 'Completed', val: stats.done, color: '#3b82f6' }
+      ].map(s => `<div class="stat-card">
+    <p style="font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">${s.label}</p>
+    <p style="font-size:36px;font-weight:800;font-family:'Syne',sans-serif;color:${s.color};">${s.val}</p>
+  </div>`).join('');
+
+      // Donut
+      const segments = [
+        { label: 'Done', val: stats.done, color: '#10b981' },
+        { label: 'In Progress', val: stats.inProgress, color: '#f59e0b' },
+        { label: 'Planned', val: stats.planned, color: '#3b82f6' }
+      ].filter(s => s.val > 0);
+      const total = stats.total || 1;
+      let offset = 25;
+      const r = 60, cx = 70, cy = 70, circumf = 2 * Math.PI * r;
+      const paths = segments.map(s => {
+        const pct = s.val / total; const dash = circumf * pct; const gap = circumf - dash;
+        const path = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${s.color}" stroke-width="20" stroke-dasharray="${dash} ${gap}" stroke-dashoffset="${-circumf * offset / 100 + circumf * 0.25}" transform="rotate(-90 ${cx} ${cy})"/>`;
+        offset += pct * 100; return path;
+      });
+
+      document.getElementById('donut-chart').innerHTML = `
+    <svg width="140" height="140" viewBox="0 0 140 140">
+      <circle cx="70" cy="70" r="60" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="20"/>
+      ${paths.join('')}
+      <text x="70" y="66" text-anchor="middle" fill="white" font-size="20" font-weight="800" font-family="Syne">${stats.completionRate}%</text>
+      <text x="70" y="82" text-anchor="middle" fill="#64748b" font-size="10">complete</text>
+    </svg>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center;">
+      ${segments.map(s => `<div style="display:flex;align-items:center;gap:6px;font-size:13px;"><div style="width:10px;height:10px;border-radius:50%;background:${s.color};"></div>${s.label}: ${s.val}</div>`).join('')}
+    </div>`;
+
+      // Workload
+      const maxT = Math.max(1, ...stats.memberWorkload.map(m => m.tasks));
+      document.getElementById('workload-chart').innerHTML = stats.memberWorkload.length ? stats.memberWorkload.map(m => `
+    <div style="margin-bottom:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="avatar">${m.avatar}</div>
+          <span style="font-size:14px;font-weight:600;">${m.name}</span>
+        </div>
+        <span style="font-size:13px;color:#64748b;">${m.done}/${m.tasks} done</span>
+      </div>
+      <div class="progress-bar"><div class="progress-fill" style="width:${Math.round(m.tasks / maxT * 100)}%;"></div></div>
+    </div>`).join('') : '<p style="color:#64748b;">No workload data</p>';
+    }
+
+    // ─── Timeline ─────────────────────────────────────────────────────────────────
+    async function loadTimeline() {
+      const teamId = document.getElementById('timeline-team').value;
+      if (!teamId) return;
+      const tasks = await api(`/api/tasks?teamId=${teamId}`);
+      if (!tasks || !tasks.length) { document.getElementById('timeline-container').innerHTML = '<p style="color:#64748b;text-align:center;padding:32px;">No tasks for this team</p>'; return; }
+
+      const today = new Date();
+      const start = new Date(today); start.setDate(start.getDate() - 7);
+      const end = new Date(today); end.setDate(end.getDate() + 21);
+      const totalDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
+
+      const days = [];
+      for (let i = 0; i < totalDays; i++) { const d = new Date(start); d.setDate(d.getDate() + i); days.push(d); }
+
+      const colors = { 'done': '#10b981', 'in progress': '#f59e0b', 'planned': '#3b82f6' };
+
+      document.getElementById('timeline-container').innerHTML = `
+    <div style="min-width:600px;">
+      <div style="display:grid;grid-template-columns:160px 1fr;gap:0;margin-bottom:12px;">
+        <div style="font-size:12px;color:#64748b;font-weight:600;">TASK</div>
+        <div style="display:flex;">${days.map(d => `<div style="flex:1;text-align:center;font-size:10px;color:${d.toDateString() === today.toDateString() ? '#a78bfa' : '#64748b'};font-weight:${d.toDateString() === today.toDateString() ? 700 : 400};">${d.getDate()}</div>`).join('')}</div>
+      </div>
+      ${tasks.map(t => {
+        const due = t.dueDate ? new Date(t.dueDate) : null;
+        const created = new Date(t.createdAt || today);
+        const barStart = Math.max(0, Math.floor((created - start) / (1000 * 60 * 60 * 24)));
+        const barEnd = due ? Math.min(totalDays, Math.ceil((due - start) / (1000 * 60 * 60 * 24))) : barStart + 3;
+        const barWidth = Math.max(1, (barEnd - barStart) / totalDays * 100);
+        const barLeft = barStart / totalDays * 100;
+        return `<div style="display:grid;grid-template-columns:160px 1fr;gap:0;margin-bottom:8px;align-items:center;">
+          <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:12px;">${t.title}</div>
+          <div style="position:relative;height:28px;">
+            <div style="position:absolute;left:${barLeft}%;width:${barWidth}%;height:100%;background:${colors[t.status] || '#7c3aed'}22;border-radius:6px;"></div>
+            <div class="timeline-bar" style="position:absolute;left:${barLeft}%;width:${barWidth}%;background:${colors[t.status] || '#7c3aed'};">${t.title}</div>
+          </div>
+        </div>`;
+      }).join('')}
+      <div style="position:relative;margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06);">
+        <div style="display:grid;grid-template-columns:160px 1fr;"><div></div><div style="position:relative;"><div style="position:absolute;left:${(7 / totalDays) * 100}%;width:2px;height:20px;background:#a78bfa;border-radius:1px;"></div><div style="position:absolute;left:${(7 / totalDays) * 100}%;font-size:10px;color:#a78bfa;margin-top:20px;transform:translateX(-50%);">Today</div></div></div>
+      </div>
+    </div>`;
+    }
+
+    // ─── Notes ───────────────────────────────────────────────────────────────────
+    let notes = [];
+    async function loadNotes() {
+      const teamId = document.getElementById('notes-team').value;
+      if (!teamId) return;
+      notes = await api(`/api/notes?teamId=${teamId}`) || [];
+      renderNotesSidebar();
+    }
+
+    function renderNotesSidebar() {
+      document.getElementById('notes-sidebar').innerHTML = notes.map(n => `
+    <div class="note-card ${selectedNote?.id === n.id ? 'selected' : ''}" onclick="openNote('${n.id}')">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+        <h4 style="font-weight:700;margin:0 0 6px;font-size:14px;">${n.title || 'Untitled'}</h4>
+        <button onclick="deleteNote('${n.id}');event.stopPropagation();" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:14px;padding:0;margin-left:8px;">✕</button>
+      </div>
+      <p style="color:#64748b;font-size:12px;margin:0;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">${n.content || 'No content'}</p>
+    </div>`).join('') || '<p style="color:#64748b;font-size:14px;padding:8px;">No notes yet</p>';
+    }
+
+    function openNote(id) {
+      selectedNote = notes.find(n => n.id === id);
+      if (!selectedNote) return;
+      renderNotesSidebar();
+      document.getElementById('note-editor').innerHTML = `
+    <input class="input" value="${selectedNote.title || ''}" id="note-title-input" placeholder="Note title..." style="font-size:18px;font-weight:700;margin-bottom:16px;background:transparent;border:none;border-bottom:1px solid rgba(255,255,255,0.1);border-radius:0;padding:8px 0;" oninput="noteChanged()" />
+    <textarea id="note-content-input" class="input" placeholder="Start writing..." style="flex:1;resize:none;background:transparent;border:none;border-radius:0;font-size:14px;line-height:1.8;padding:8px 0;" oninput="noteChanged()">${selectedNote.content || ''}</textarea>
+    <div style="margin-top:12px;display:flex;justify-content:space-between;align-items:center;">
+      <span id="note-save-status" style="font-size:12px;color:#64748b;">Auto-saving...</span>
+      <span style="font-size:12px;color:#64748b;">Updated: ${new Date(selectedNote.updatedAt).toLocaleString()}</span>
+    </div>`;
+    }
+
+    function noteChanged() {
+      clearTimeout(noteAutoSaveTimer);
+      document.getElementById('note-save-status').textContent = 'Unsaved changes...';
+      noteAutoSaveTimer = setTimeout(saveNote, 1500);
+    }
+
+    async function saveNote() {
+      if (!selectedNote) return;
+      const title = document.getElementById('note-title-input')?.value;
+      const content = document.getElementById('note-content-input')?.value;
+      const updated = await api(`/api/notes/${selectedNote.id}`, 'PUT', { title, content });
+      if (!updated) return;
+      const i = notes.findIndex(n => n.id === selectedNote.id);
+      if (i >= 0) notes[i] = updated; selectedNote = updated;
+      document.getElementById('note-save-status').textContent = '✓ Saved';
+      renderNotesSidebar();
+    }
+
+    async function createNote() {
+      const teamId = document.getElementById('notes-team').value;
+      if (!teamId) return toast('Select a team first', 'error');
+      const note = await api('/api/notes', 'POST', { title: 'New Note', content: '', teamId });
+      if (!note) return;
+      notes.unshift(note); renderNotesSidebar(); openNote(note.id); toast('Note created');
+    }
+
+    async function deleteNote(id) {
+      await api(`/api/notes/${id}`, 'DELETE');
+      notes = notes.filter(n => n.id !== id);
+      if (selectedNote?.id === id) { selectedNote = null; document.getElementById('note-editor').innerHTML = '<div style="text-align:center;color:#64748b;margin:auto;"><p>Select a note to edit</p></div>'; }
+      renderNotesSidebar(); toast('Note deleted');
+    }
+
+    // ─── Files ───────────────────────────────────────────────────────────────────
+    let selectedUploadFiles = [];
+    let currentUploadTab = 'file';
+
+    async function loadFiles() {
+      const teamId = document.getElementById('files-team').value;
+      if (!teamId) return;
+      const files = await api(`/api/files?teamId=${teamId}`) || [];
+      const icons = { pdf: '📄', zip: '🗜️', png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', svg: '🖼️', doc: '📝', docx: '📝', txt: '📝', xls: '📊', xlsx: '📊', ppt: '📊', pptx: '📊', mp4: '🎬', mp3: '🎵', csv: '📊', json: '📋', html: '🌐', css: '🎨', js: '⚡' };
+      document.getElementById('files-grid').innerHTML = files.map(f => {
+        const ext = f.name.split('.').pop().toLowerCase();
+        const hasRealFile = !!f.storedName;
+        return `<div class="glass glass-hover" style="border-radius:16px;padding:20px;position:relative;">
+      ${hasRealFile ? '<div style="position:absolute;top:10px;right:10px;width:8px;height:8px;background:#10b981;border-radius:50%;box-shadow:0 0 8px #10b981;" title="Real file"></div>' : ''}
+      <div style="font-size:36px;margin-bottom:12px;">${icons[ext] || '📁'}</div>
+      <h4 style="font-weight:700;margin:0 0 4px;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${f.name}">${f.name}</h4>
+      <p style="color:#64748b;font-size:12px;margin:0 0 12px;">${f.size} • ${new Date(f.uploadedAt).toLocaleDateString()}</p>
+      <div style="display:flex;gap:8px;">
+        ${hasRealFile ? `<button style="flex:1;padding:8px;border-radius:8px;background:rgba(16,185,129,0.15);color:#34d399;border:1px solid rgba(16,185,129,0.2);font-size:12px;font-weight:600;cursor:pointer;transition:all 0.2s;" onmouseover="this.style.background='rgba(16,185,129,0.25)'" onmouseout="this.style.background='rgba(16,185,129,0.15)'" onclick="downloadFile('${f.id}')">↓ Download</button>` : `<button style="flex:1;padding:8px;border-radius:8px;background:rgba(100,116,139,0.1);color:#64748b;border:1px solid rgba(255,255,255,0.06);font-size:12px;font-weight:600;cursor:not-allowed;" disabled title="No physical file">No file</button>`}
+        <button onclick="deleteFile('${f.id}')" class="btn-danger" style="padding:8px 12px;">✕</button>
+      </div>
+    </div>`;
+      }).join('') || '<div style="grid-column:1/-1;text-align:center;color:#64748b;padding:48px;"><svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" style="margin:0 auto 12px;display:block;opacity:0.3;"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg><p>No files uploaded yet</p><p style="font-size:13px;">Upload files using the button above</p></div>';
+    }
+
+    function downloadFile(fileId) {
+      const a = document.createElement('a');
+      a.href = `/api/files/${fileId}/download`;
+      a.setAttribute('download', '');
+      // Add auth header via fetch and blob
+      fetch(`/api/files/${fileId}/download`, { headers: { 'Authorization': `Bearer ${token}` } })
+        .then(res => {
+          if (!res.ok) throw new Error('Download failed');
+          const disposition = res.headers.get('content-disposition');
+          let filename = 'download';
+          if (disposition) {
+            const match = disposition.match(/filename="?([^"]+)"?/);
+            if (match) filename = match[1];
+          }
+          return res.blob().then(blob => ({ blob, filename }));
+        })
+        .then(({ blob, filename }) => {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url; a.download = filename;
+          document.body.appendChild(a); a.click();
+          document.body.removeChild(a); URL.revokeObjectURL(url);
+          toast('Download started! 📥');
+        })
+        .catch(() => toast('Download failed', 'error'));
+    }
+
+    function openUploadFile() {
+      const teamId = document.getElementById('files-team').value;
+      document.getElementById('modal-upload-file').classList.add('open');
+      const sel = document.getElementById('uf-team');
+      sel.innerHTML = '<option value="">Select team</option>';
+      allTeams.forEach(t => { sel.innerHTML += `<option value="${t.id}" ${t.id === teamId ? 'selected' : ''}>${t.name}</option>`; });
+      selectedUploadFiles = [];
+      document.getElementById('selected-files').style.display = 'none';
+      document.getElementById('selected-files').innerHTML = '';
+      document.getElementById('upload-progress').style.display = 'none';
+      document.getElementById('file-input').value = '';
+      document.getElementById('import-url-input') && (document.getElementById('import-url-input').value = '');
+      switchUploadTab('file');
+    }
+
+    function switchUploadTab(tab) {
+      currentUploadTab = tab;
+      document.getElementById('upload-panel-file').style.display = tab === 'file' ? 'block' : 'none';
+      document.getElementById('upload-panel-url').style.display = tab === 'url' ? 'block' : 'none';
+      document.getElementById('upload-tab-file').style.background = tab === 'file' ? '#7c3aed' : 'transparent';
+      document.getElementById('upload-tab-file').style.color = tab === 'file' ? 'white' : '#94a3b8';
+      document.getElementById('upload-tab-url').style.background = tab === 'url' ? '#7c3aed' : 'transparent';
+      document.getElementById('upload-tab-url').style.color = tab === 'url' ? 'white' : '#94a3b8';
+      document.getElementById('upload-submit-btn').textContent = tab === 'file' ? 'Upload' : 'Import';
+    }
+
+    function handleFileSelect(e) {
+      const files = Array.from(e.target.files);
+      if (!files.length) return;
+      selectedUploadFiles = files;
+      showSelectedFiles();
+    }
+
+    function showSelectedFiles() {
+      const container = document.getElementById('selected-files');
+      container.style.display = 'block';
+      container.innerHTML = selectedUploadFiles.map((f, i) => {
+        const sizeStr = f.size >= 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : f.size >= 1024 ? (f.size / 1024).toFixed(1) + ' KB' : f.size + ' B';
+        return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;margin-bottom:6px;">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+        <span style="font-size:16px;">📎</span>
+        <span style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${f.name}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+        <span style="font-size:12px;color:#64748b;">${sizeStr}</span>
+        <button onclick="removeFile(${i})" style="background:none;border:none;color:#f87171;cursor:pointer;font-size:14px;padding:2px;">✕</button>
+      </div>
+    </div>`;
+      }).join('');
+    }
+
+    function removeFile(idx) {
+      selectedUploadFiles.splice(idx, 1);
+      if (selectedUploadFiles.length === 0) {
+        document.getElementById('selected-files').style.display = 'none';
+        document.getElementById('file-input').value = '';
+      } else showSelectedFiles();
+    }
+
+    async function submitUpload() {
+      const teamId = document.getElementById('uf-team').value;
+      if (!teamId) return toast('Select a team first', 'error');
+      const btn = document.getElementById('upload-submit-btn');
+
+      if (currentUploadTab === 'url') {
+        const url = document.getElementById('import-url-input').value.trim();
+        if (!url) return toast('Enter a URL', 'error');
+        btn.disabled = true; btn.textContent = 'Importing...';
+        document.getElementById('upload-progress').style.display = 'block';
+        document.getElementById('upload-progress-bar').style.width = '60%';
+        document.getElementById('upload-progress-text').textContent = 'Downloading from URL...';
+        try {
+          const res = await api('/api/files/import-url', 'POST', { url, teamId });
+          if (res && !res.error) {
+            document.getElementById('upload-progress-bar').style.width = '100%';
+            document.getElementById('upload-progress-pct').textContent = '100%';
+            toast('File imported! 🎉');
+            setTimeout(() => { closeModal('modal-upload-file'); loadFiles(); }, 500);
+          } else {
+            toast(res?.error || 'Import failed', 'error');
+            document.getElementById('upload-progress').style.display = 'none';
+          }
+        } catch (e) { toast('Import failed', 'error'); document.getElementById('upload-progress').style.display = 'none'; }
+        btn.disabled = false; btn.textContent = 'Import';
+        return;
+      }
+
+      // File upload
+      if (!selectedUploadFiles.length) return toast('Select files first', 'error');
+      btn.disabled = true; btn.textContent = 'Uploading...';
+      document.getElementById('upload-progress').style.display = 'block';
+
+      let completed = 0;
+      for (const file of selectedUploadFiles) {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('teamId', teamId);
+
+        try {
+          const xhr = new XMLHttpRequest();
+          await new Promise((resolve, reject) => {
+            xhr.upload.onprogress = (e) => {
+              if (e.lengthComputable) {
+                const filePct = Math.round(e.loaded / e.total * 100);
+                const totalPct = Math.round((completed / selectedUploadFiles.length + filePct / 100 / selectedUploadFiles.length) * 100);
+                document.getElementById('upload-progress-bar').style.width = totalPct + '%';
+                document.getElementById('upload-progress-pct').textContent = totalPct + '%';
+                document.getElementById('upload-progress-text').textContent = `Uploading ${file.name}...`;
+              }
+            };
+            xhr.onload = () => {
+              if (xhr.status >= 200 && xhr.status < 300) { completed++; resolve(); }
+              else reject(new Error('Upload failed'));
+            };
+            xhr.onerror = () => reject(new Error('Upload failed'));
+            xhr.open('POST', '/api/files/upload');
+            xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+            xhr.send(formData);
+          });
+        } catch (e) { toast(`Failed to upload ${file.name}`, 'error'); }
+      }
+
+      document.getElementById('upload-progress-bar').style.width = '100%';
+      document.getElementById('upload-progress-pct').textContent = '100%';
+      document.getElementById('upload-progress-text').textContent = '✓ Upload complete!';
+      toast(`${completed} file${completed !== 1 ? 's' : ''} uploaded! 🎉`);
+      setTimeout(() => { closeModal('modal-upload-file'); loadFiles(); }, 700);
+      btn.disabled = false; btn.textContent = 'Upload';
+    }
+
+    // Drag and drop handlers
+    document.addEventListener('DOMContentLoaded', () => {
+      const dropZone = document.getElementById('drop-zone');
+      if (!dropZone) return;
+      ['dragenter', 'dragover'].forEach(ev => dropZone.addEventListener(ev, (e) => {
+        e.preventDefault(); e.stopPropagation();
+        dropZone.style.borderColor = '#7c3aed';
+        dropZone.style.background = 'rgba(124,58,237,0.08)';
+      }));
+      ['dragleave', 'drop'].forEach(ev => dropZone.addEventListener(ev, (e) => {
+        e.preventDefault(); e.stopPropagation();
+        dropZone.style.borderColor = 'rgba(124,58,237,0.3)';
+        dropZone.style.background = 'rgba(124,58,237,0.03)';
+      }));
+      dropZone.addEventListener('drop', (e) => {
+        const files = Array.from(e.dataTransfer.files);
+        if (files.length) {
+          selectedUploadFiles = [...selectedUploadFiles, ...files];
+          showSelectedFiles();
+        }
+      });
+    });
+
+    async function deleteFile(id) {
+      if (!confirm('Delete this file?')) return;
+      await api(`/api/files/${id}`, 'DELETE');
+      toast('File deleted'); loadFiles();
+    }
+
+    // ─── Search ──────────────────────────────────────────────────────────────────
+    let searchTimer;
+    function doSearch() {
+      clearTimeout(searchTimer);
+      const q = document.getElementById('search-input').value.trim();
+      if (!q) { document.getElementById('search-results').innerHTML = ''; return; }
+      searchTimer = setTimeout(async () => {
+        const res = await api(`/api/search?q=${encodeURIComponent(q)}`);
+        if (!res) return;
+        const container = document.getElementById('search-results');
+        let html = '';
+        if (res.tasks.length) {
+          html += `<h3 style="font-family:'Syne',sans-serif;font-size:14px;color:#64748b;font-weight:700;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;">Tasks (${res.tasks.length})</h3>`;
+          html += res.tasks.map(t => `<div class="search-result" onclick="nav('tasks')"><div style="display:flex;align-items:center;gap:8px;"><span class="badge badge-${t.status === 'done' ? 'done' : t.status === 'in progress' ? 'progress' : 'planned'}">${t.status}</span><strong>${t.title}</strong></div>${t.description ? `<p style="color:#64748b;font-size:13px;margin:4px 0 0;">${t.description}</p>` : ''}</div>`).join('');
+        }
+        if (res.notes.length) {
+          html += `<h3 style="font-family:'Syne',sans-serif;font-size:14px;color:#64748b;font-weight:700;margin:20px 0 8px;text-transform:uppercase;letter-spacing:1px;">Notes (${res.notes.length})</h3>`;
+          html += res.notes.map(n => `<div class="search-result" onclick="nav('notes')"><strong>${n.title}</strong><p style="color:#64748b;font-size:13px;margin:4px 0 0;">${n.content.substring(0, 120)}...</p></div>`).join('');
+        }
+        container.innerHTML = html || `<div style="text-align:center;padding:48px;color:#64748b;">No results for "${q}"</div>`;
+      }, 300);
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────────────────
+    function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+    let toastTimer;
+    function toast(msg, type = 'success') {
+      const el = document.getElementById('toast');
+      el.textContent = msg; el.className = `toast show ${type}`;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.className = 'toast', 3000);
+    }
+
+    // ─── Notifications ─────────────────────────────────────────────────────────
+    async function loadNotifications() {
+      allNotifications = await api('/api/notifications') || [];
+      const unread = allNotifications.filter(n => !n.read).length;
+      const badge = document.getElementById('notif-badge');
+      if (unread > 0) {
+        badge.style.display = 'block';
+        badge.textContent = unread > 9 ? '9+' : unread;
+      } else {
+        badge.style.display = 'none';
+      }
+      renderNotifications();
+    }
+
+    function renderNotifications() {
+      const list = document.getElementById('notif-list');
+      if (!allNotifications.length) {
+        list.innerHTML = '<div style="text-align:center;color:#64748b;padding:40px;"><p>No notifications yet</p></div>';
+        return;
+      }
+      list.innerHTML = allNotifications.map(n => {
+        const ago = timeAgo(new Date(n.createdAt));
+        const icon = n.type === 'task_assigned' ? '📋' : n.type === 'time_extended' ? '⏰' : '🔔';
+        return `<div style="padding:14px;border-radius:12px;margin-bottom:8px;cursor:pointer;transition:all 0.2s;background:${n.read ? 'transparent' : 'rgba(124,58,237,0.06)'};border:1px solid ${n.read ? 'rgba(255,255,255,0.04)' : 'rgba(124,58,237,0.1)'}" onclick="markNotifRead('${n.id}')" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background='${n.read ? 'transparent' : 'rgba(124,58,237,0.06)'}';">
+          <div style="display:flex;gap:10px;align-items:flex-start;">
+            <span style="font-size:18px;">${icon}</span>
+            <div style="flex:1;min-width:0;">
+              <p style="font-size:13px;font-weight:${n.read ? '400' : '600'};margin:0 0 4px;color:${n.read ? '#94a3b8' : '#e2e8f0'}">${n.message}</p>
+              <p style="font-size:11px;color:#64748b;margin:0;">${ago}</p>
+            </div>
+            ${!n.read ? '<div style="width:8px;height:8px;background:#7c3aed;border-radius:50%;flex-shrink:0;margin-top:4px;"></div>' : ''}
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    function toggleNotifications() {
+      const panel = document.getElementById('notif-panel');
+      panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    }
+
+    async function markNotifRead(id) {
+      await api(`/api/notifications/${id}/read`, 'PUT');
+      const n = allNotifications.find(x => x.id === id);
+      if (n) n.read = true;
+      loadNotifications();
+    }
+
+    async function markAllRead() {
+      await api('/api/notifications/read-all', 'PUT');
+      allNotifications.forEach(n => n.read = true);
+      loadNotifications();
+    }
+
+    function timeAgo(date) {
+      const s = Math.floor((Date.now() - date) / 1000);
+      if (s < 60) return 'just now';
+      if (s < 3600) return Math.floor(s/60) + 'm ago';
+      if (s < 86400) return Math.floor(s/3600) + 'h ago';
+      return Math.floor(s/86400) + 'd ago';
+    }
+
+    // ─── Extend Time (Leader Only) ──────────────────────────────────────────────
+    async function extendTime(taskId) {
+      const mins = prompt('Add extra minutes:');
+      if (!mins || isNaN(mins) || parseInt(mins) <= 0) return;
+      const res = await api(`/api/tasks/${taskId}/extend-time`, 'POST', { additionalMinutes: parseInt(mins) });
+      if (res && !res.error) {
+        const i = allTasks.findIndex(t => t.id === taskId);
+        if (i >= 0) allTasks[i] = res;
+        renderTasks();
+        toast(`Added ${mins} minutes! ⏰`);
+      } else {
+        toast(res?.error || 'Failed to extend time', 'error');
+      }
+    }
+
+    // ─── GitHub ─────────────────────────────────────────────────────────────────
+    let currentGitHubRepo = null;
+    let currentGitHubPath = '';
+
+    async function loadGitHub() {
+      const teamId = document.getElementById('github-team').value;
+      if (!teamId) {
+        document.getElementById('github-empty').style.display = 'block';
+        document.getElementById('github-connect').style.display = 'none';
+        document.getElementById('github-browser').style.display = 'none';
+        return;
+      }
+
+      const team = allTeams.find(t => t.id === teamId);
+      if (!team) return;
+
+      if (team.githubRepo) {
+        currentGitHubRepo = team.githubRepo;
+        currentGitHubPath = '';
+        document.getElementById('github-empty').style.display = 'none';
+        document.getElementById('github-connect').style.display = team.ownerId === user.id ? 'block' : 'none';
+        document.getElementById('github-browser').style.display = 'block';
+        browseGitHub('');
+      } else {
+        currentGitHubRepo = null;
+        document.getElementById('github-empty').style.display = 'none';
+        document.getElementById('github-connect').style.display = 'block';
+        document.getElementById('github-browser').style.display = 'none';
+        if (team.ownerId !== user.id) {
+          document.getElementById('github-connect').innerHTML = '<div class="glass" style="border-radius:16px;padding:24px;"><p style="color:#64748b;">No GitHub repo linked. Ask the team leader to add one.</p></div>';
+        }
+      }
+    }
+
+    async function linkGitHubRepo() {
+      const teamId = document.getElementById('github-team').value;
+      const url = document.getElementById('github-repo-url').value.trim();
+      if (!url) return toast('Enter a GitHub URL', 'error');
+
+      const res = await api(`/api/teams/${teamId}/github`, 'POST', { repoUrl: url });
+      if (res && !res.error) {
+        const team = allTeams.find(t => t.id === teamId);
+        if (team) team.githubRepo = res.githubRepo;
+        toast('GitHub repo linked! 🎉');
+        loadGitHub();
+      } else {
+        toast(res?.error || 'Failed to link repo', 'error');
+      }
+    }
+
+    async function browseGitHub(path) {
+      currentGitHubPath = path;
+      const [owner, repo] = currentGitHubRepo.split('/');
+
+      // Update breadcrumb
+      const parts = path ? path.split('/') : [];
+      let breadHtml = `<a onclick="browseGitHub('')" style="color:#a78bfa;cursor:pointer;font-size:13px;font-weight:600;">📁 ${repo}</a>`;
+      let cumPath = '';
+      parts.forEach((p, i) => {
+        cumPath += (i > 0 ? '/' : '') + p;
+        const cp = cumPath;
+        breadHtml += `<span style="color:#64748b;">/</span><a onclick="browseGitHub('${cp}')" style="color:#a78bfa;cursor:pointer;font-size:13px;">${p}</a>`;
+      });
+      document.getElementById('github-breadcrumb').innerHTML = breadHtml;
+
+      // Load contents
+      document.getElementById('github-file-list').innerHTML = '<div style="text-align:center;padding:20px;color:#64748b;">Loading...</div>';
+      const contents = await api(`/api/github/contents/${owner}/${repo}?path=${encodeURIComponent(path)}`);
+
+      if (!contents || contents.error) {
+        document.getElementById('github-file-list').innerHTML = `<div style="padding:16px;color:#f87171;">${contents?.error || 'Failed to load'}</div>`;
+        return;
+      }
+
+      const items = Array.isArray(contents) ? contents : [contents];
+      // Sort: dirs first, then files
+      items.sort((a, b) => {
+        if (a.type === 'dir' && b.type !== 'dir') return -1;
+        if (a.type !== 'dir' && b.type === 'dir') return 1;
+        return a.name.localeCompare(b.name);
+      });
+
+      document.getElementById('github-file-list').innerHTML = items.map(item => {
+        const isDir = item.type === 'dir';
+        const icon = isDir ? '📁' : getFileIcon(item.name);
+        const sizeStr = item.size ? (item.size >= 1024 ? (item.size/1024).toFixed(1)+'KB' : item.size+'B') : '';
+        return `<div onclick="${isDir ? `browseGitHub('${item.path}')` : `viewGitHubFile('${item.path}')`}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;transition:all 0.2s;border-bottom:1px solid rgba(255,255,255,0.04);" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background='transparent'">
+          <span style="font-size:16px;">${icon}</span>
+          <div style="flex:1;min-width:0;"><p style="margin:0;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${item.name}</p></div>
+          ${sizeStr ? `<span style="font-size:11px;color:#64748b;">${sizeStr}</span>` : ''}
+        </div>`;
+      }).join('');
+    }
+
+    async function viewGitHubFile(path) {
+      const [owner, repo] = currentGitHubRepo.split('/');
+      document.getElementById('github-file-content').innerHTML = '<div style="text-align:center;padding:40px;color:#64748b;">Loading file...</div>';
+
+      const file = await api(`/api/github/file/${owner}/${repo}/${path}`);
+      if (!file || file.error) {
+        document.getElementById('github-file-content').innerHTML = `<p style="color:#f87171;">${file?.error || 'Failed to load file'}</p>`;
+        return;
+      }
+
+      let content = '';
+      try { content = atob(file.content); } catch(e) { content = '(Binary file — cannot display)'; }
+
+      const ext = path.split('.').pop().toLowerCase();
+      const imgExts = ['png','jpg','jpeg','gif','svg','webp','ico'];
+
+      if (imgExts.includes(ext)) {
+        document.getElementById('github-file-content').innerHTML = `<div style="text-align:center;"><img src="data:image/${ext};base64,${file.content}" style="max-width:100%;border-radius:8px;" /></div>`;
+      } else {
+        const escaped = content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        document.getElementById('github-file-content').innerHTML = `<div style="margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;"><span style="font-size:14px;font-weight:700;">${path.split('/').pop()}</span><span style="font-size:12px;color:#64748b;">${file.size >= 1024 ? (file.size/1024).toFixed(1)+'KB' : file.size+'B'}</span></div><pre style="background:rgba(0,0,0,0.3);border-radius:12px;padding:20px;overflow-x:auto;font-size:13px;line-height:1.6;font-family:'JetBrains Mono',monospace;color:#c4b5fd;border:1px solid rgba(255,255,255,0.06);white-space:pre;">${escaped}</pre>`;
+      }
+    }
+
+    function getFileIcon(name) {
+      const ext = name.split('.').pop().toLowerCase();
+      const icons = {js:'⚡',ts:'💠',py:'🐍',html:'🌐',css:'🎨',json:'📋',md:'📝',txt:'📄',yml:'⚙️',yaml:'⚙️',xml:'📰',sql:'🗄️',sh:'🖥️',rb:'💎',java:'☕',go:'🔵',rs:'🦀',cpp:'⚙️',c:'⚙️',h:'⚙️',php:'🐘',svg:'🎨',png:'🖼️',jpg:'🖼️',gif:'🖼️',pdf:'📕',zip:'📦',tar:'📦',lock:'🔒'};
+      return icons[ext] || '📄';
+    }
+  </script>
+</body>
+
+</html>
