@@ -16,8 +16,9 @@ export default function NotesPanel({ teamId }) {
     if (!teamId) return;
     const data = await api(`/api/notes?teamId=${teamId}`);
     if (data && Array.isArray(data)) {
-      setNotes(data);
-      if (!activeNote && data.length > 0) setActiveNote(data[0]);
+      const filtered = data.filter(n => !n.title?.startsWith('📊 Diagram:'));
+      setNotes(filtered);
+      if (!activeNote && filtered.length > 0) setActiveNote(filtered[0]);
     }
     setLoading(false);
   }, [teamId]);

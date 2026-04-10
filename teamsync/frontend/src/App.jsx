@@ -5,6 +5,7 @@ import { supabase } from './lib/supabase';
 // Placeholder Pages
 import AuthPage from './pages/Auth';
 import DashboardPage from './pages/Dashboard';
+import LandingPage from './pages/Landing';
 
 function App() {
   const [session, setSession] = useState(null);
@@ -40,7 +41,7 @@ function App() {
       <Routes>
         <Route 
           path="/login" 
-          element={!session ? <AuthPage /> : <Navigate to="/dashboard" replace />} 
+          element={<AuthPage session={session} />} 
         />
         <Route 
           path="/dashboard" 
@@ -48,7 +49,7 @@ function App() {
         />
         <Route 
           path="/" 
-          element={<Navigate to={session ? "/dashboard" : "/login"} replace />} 
+          element={<LandingPage session={session} />} 
         />
       </Routes>
     </Router>

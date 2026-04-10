@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useMemo } from 'react';
 import { ReactFlow, Controls, Background, MiniMap, Handle, Position, addEdge, useNodesState, useEdgesState, MarkerType } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { toPng } from 'html-to-image';
+import { toPng, toJpeg } from 'html-to-image';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Trash2, Download, Save, Upload, X, Circle, Square, Diamond, Type, Palette } from 'lucide-react';
 import { api } from '../lib/api';
@@ -109,6 +109,7 @@ export default function WhiteboardPanel({ teamId }) {
   const [savedDiagrams, setSavedDiagrams] = useState([]);
   const [counter, setCounter] = useState(4);
   const flowRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const memoNodeTypes = useMemo(() => nodeTypes, []);
 
@@ -145,7 +146,19 @@ export default function WhiteboardPanel({ teamId }) {
     if (!el) return;
     toPng(el, { backgroundColor: '#0d0c13' }).then(dataUrl => {
       const link = document.createElement('a');
-      link.download = 'flowchart.png';
+      link.download = 'diagram.png';
+      link.href = dataUrl;
+      link.click();
+    }).catch(console.error);
+  };
+
+  const exportJpg = () => {
+    if (!flowRef.current) return;
+    const el = flowRef.current.querySelector('.react-flow__viewport');
+    if (!el) return;
+    toJpeg(el, { backgroundColor: '#0d0c13', quality: 0.95 }).then(dataUrl => {
+      const link = document.createElement('a');
+      link.download = 'diagram.jpg';
       link.href = dataUrl;
       link.click();
     }).catch(console.error);
@@ -156,17 +169,37 @@ export default function WhiteboardPanel({ teamId }) {
     const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.download = 'flowchart.json';
+    link.download = 'diagram.json';
     link.href = url;
     link.click();
     URL.revokeObjectURL(url);
   };
 
+  const importJson = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target.result);
+        if (data.nodes) setNodes(data.nodes);
+        if (data.edges) setEdges(data.edges);
+        setCounter(Math.max(...(data.nodes || []).map(n => parseInt(n.id) || 0)) + 1);
+      } catch (err) {
+        console.error('Invalid JSON file');
+      }
+    };
+    reader.readAsText(file);
+    // Reset file input
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   const saveDiagram = async () => {
     if (!saveName.trim()) return;
-    await api('/api/notes', 'POST', {
-      title: `📊 Diagram: ${saveName}`,
-      content: JSON.stringify({ nodes, edges }),
+    await api('/api/diagrams', 'POST', {
+      title: saveName,
+      diagramData: { nodes, edges },
       teamId,
     });
     setShowSaveModal(false);
@@ -174,21 +207,27 @@ export default function WhiteboardPanel({ teamId }) {
   };
 
   const loadDiagrams = async () => {
-    const data = await api(`/api/notes?teamId=${teamId}`);
+    const data = await api(`/api/diagrams?teamId=${teamId}`);
     if (data && Array.isArray(data)) {
-      setSavedDiagrams(data.filter(n => n.title?.startsWith('📊 Diagram:')));
+      setSavedDiagrams(data);
       setShowLoadModal(true);
     }
   };
 
-  const loadDiagram = (note) => {
+  const loadDiagram = (diagram) => {
     try {
-      const data = JSON.parse(note.content);
+      const data = diagram.diagramData || {};
       if (data.nodes) setNodes(data.nodes);
       if (data.edges) setEdges(data.edges);
-      setCounter(Math.max(...data.nodes.map(n => parseInt(n.id) || 0)) + 1);
+      setCounter(Math.max(...(data.nodes || []).map(n => parseInt(n.id) || 0)) + 1);
       setShowLoadModal(false);
     } catch (e) { console.error('Invalid diagram data'); }
+  };
+
+  const handleDiagramDelete = async (id, e) => {
+    e.stopPropagation();
+    await api(`/api/diagrams/${id}`, 'DELETE');
+    setSavedDiagrams(prev => prev.filter(d => d.id !== id));
   };
 
   return (
@@ -249,13 +288,27 @@ export default function WhiteboardPanel({ teamId }) {
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-xs transition-all cursor-pointer">
           <Upload className="w-3.5 h-3.5" /> Load
         </button>
+        
+        <div className="w-px h-4 bg-white/10 mx-1" />
+        
         <button onClick={exportPng}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-xs transition-all cursor-pointer">
           <Download className="w-3.5 h-3.5" /> PNG
         </button>
+        <button onClick={exportJpg}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-xs transition-all cursor-pointer">
+          <Download className="w-3.5 h-3.5" /> JPG
+        </button>
         <button onClick={exportJson}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-xs transition-all cursor-pointer">
-          <Download className="w-3.5 h-3.5" /> JSON
+          <Download className="w-3.5 h-3.5" /> JSON Export
+        </button>
+
+        {/* Hidden internal JSON import */}
+        <input type="file" accept=".json" ref={fileInputRef} onChange={importJson} className="hidden" />
+        <button onClick={() => fileInputRef.current?.click()}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-xs transition-all cursor-pointer">
+          <Upload className="w-3.5 h-3.5" /> JSON Import
         </button>
         <span className="text-[10px] text-gray-600 ml-2">💡 Drag from handle to handle to connect shapes</span>
       </div>
@@ -290,7 +343,7 @@ export default function WhiteboardPanel({ teamId }) {
               <h4 className="text-lg font-bold text-white mb-4">Save Diagram</h4>
               <input type="text" value={saveName} onChange={e => setSaveName(e.target.value)} placeholder="Diagram name..."
                 className="w-full bg-white/5 border border-white/10 rounded-xl py-3 px-4 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 mb-4" />
-              <button onClick={saveDiagram} className="w-full bg-purple-600 text-white rounded-xl py-3 font-semibold cursor-pointer">Save to Team Notes</button>
+              <button onClick={saveDiagram} className="w-full bg-purple-600 text-white rounded-xl py-3 font-semibold cursor-pointer">Save Diagram</button>
             </motion.div>
           </motion.div>
         )}
@@ -312,10 +365,16 @@ export default function WhiteboardPanel({ teamId }) {
               ) : (
                 <div className="space-y-2 max-h-60 overflow-y-auto">
                   {savedDiagrams.map(d => (
-                    <button key={d.id} onClick={() => loadDiagram(d)}
-                      className="w-full text-left p-3 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-sm transition-all cursor-pointer">
-                      {d.title.replace('📊 Diagram: ', '')}
-                    </button>
+                    <div key={d.id} className="flex gap-2">
+                      <button onClick={() => loadDiagram(d)}
+                        className="flex-1 text-left p-3 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-sm transition-all cursor-pointer">
+                        {d.title}
+                      </button>
+                      <button onClick={(e) => handleDiagramDelete(d.id, e)}
+                        className="p-3 rounded-xl bg-white/5 hover:bg-red-500/10 text-gray-400 hover:text-red-400 transition-all cursor-pointer">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   ))}
                 </div>
               )}

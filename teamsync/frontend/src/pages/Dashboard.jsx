@@ -120,16 +120,20 @@ export default function DashboardPage({ session }) {
     github: 'GitHub', analytics: 'Analytics', achievements: 'Achievements',
   };
 
+  // TRUE ZEN MODE: Unmount everything else and render purely Focus Mode
+  // This absolutely guarantees no z-index overlap, no pointer-event blocks, and full immersion!
+  if (focusOpen && focusTask) {
+    return (
+      <React.Fragment>
+        <AchievementToast currentUserId={currentUserId} />
+        <FocusMode task={focusTask} onClose={closeFocusMode} onTimer={handleFocusTimer} />
+      </React.Fragment>
+    );
+  }
+
   return (
     <div className="flex h-screen overflow-hidden font-sans" style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
       <AchievementToast currentUserId={currentUserId} />
-
-      {/* Focus Mode Overlay */}
-      <AnimatePresence>
-        {focusOpen && focusTask && (
-          <FocusMode task={focusTask} onClose={closeFocusMode} onTimer={handleFocusTimer} />
-        )}
-      </AnimatePresence>
 
       {/* Sidebar */}
       <motion.nav initial={{ x: -100, opacity: 0 }} animate={{ x: 0, opacity: 1 }}

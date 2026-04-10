@@ -68,6 +68,16 @@ CREATE TABLE IF NOT EXISTS files (
   uploaded_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- ── Diagrams ──────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS diagrams (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  team_id UUID REFERENCES teams(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  diagram_data JSONB DEFAULT '{}'::jsonb,
+  created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
 -- ── Indexes ──────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_team_members_team ON team_members(team_id);
@@ -75,6 +85,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_team ON tasks(team_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee_id);
 CREATE INDEX IF NOT EXISTS idx_notes_team ON notes(team_id);
 CREATE INDEX IF NOT EXISTS idx_files_team ON files(team_id);
+CREATE INDEX IF NOT EXISTS idx_diagrams_team ON diagrams(team_id);
 CREATE INDEX IF NOT EXISTS idx_teams_invite ON teams(invite_code);
 
 -- ── Disable RLS (server-side auth handles access control) ────────
@@ -90,5 +101,6 @@ CREATE POLICY "Allow all for authenticated" ON profiles FOR ALL USING (true) WIT
 CREATE POLICY "Allow all for authenticated" ON teams FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all for authenticated" ON team_members FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all for authenticated" ON tasks FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all for authenticated" ON notes FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all for authenticated" ON Notes FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all for authenticated" ON files FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all for authenticated" ON diagrams FOR ALL USING (true) WITH CHECK (true);

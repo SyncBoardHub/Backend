@@ -198,7 +198,7 @@ export default function FocusMode({ task, onClose, onTimer }) {
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[100] flex flex-col items-center justify-center" style={{ background: '#080810' }}>
+      className="min-h-screen w-full flex flex-col items-center justify-center relative overflow-hidden" style={{ background: '#080810' }}>
       {/* Breathing background */}
       <motion.div
         animate={{ scale: [1, 1.15, 1], opacity: [0.2, 0.35, 0.2] }}

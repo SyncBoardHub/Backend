@@ -127,14 +127,65 @@ app.post('/api/auth/register', rateLimit(60000, 5), async (req, res) => {
   if (!email || !password || !name) return res.status(400).json({ error: 'All fields are required' });
   if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
 
-  // Check if userId is taken
+  // Check if userId is taken by an ACTIVE profile
   if (userId) {
     const { data: existing } = await supabase
       .from('profiles')
       .select('id')
       .eq('user_id', userId)
       .single();
-    if (existing) return res.status(400).json({ error: 'User ID already taken' });
+
+    if (existing) {
+      // Verify the auth user still exists (not orphaned)
+      const { data: authCheck } = await supabaseAdmin.auth.admin.getUserById(existing.id);
+      if (authCheck?.user) {
+        return res.status(400).json({ error: 'User ID already taken' });
+      }
+      // Orphan profile — clean it up
+      await supabase.from('team_members').delete().eq('user_id', existing.id);
+      await supabase.from('profiles').delete().eq('id', existing.id);
+    }
+  }
+
+  // Check if email exists in profiles (orphan check)
+  const { data: existingProfile } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('email', email)
+    .single();
+
+  if (existingProfile) {
+    // Verify auth user still exists
+    const { data: authCheck } = await supabaseAdmin.auth.admin.getUserById(existingProfile.id);
+    if (authCheck?.user) {
+      return res.status(400).json({ error: 'Email already registered. Try logging in instead.' });
+    }
+    // Orphan profile — clean it up
+    await supabase.from('team_members').delete().eq('user_id', existingProfile.id);
+    await supabase.from('profiles').delete().eq('id', existingProfile.id);
+  }
+
+  // Try to delete any ghost auth user with the same email (requires service role)
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const { data: userList } = await supabaseAdmin.auth.admin.listUsers();
+      const ghostUser = userList?.users?.find(u => u.email === email);
+      if (ghostUser) {
+        // Check if this auth user has a corresponding profile
+        const { data: profileCheck } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('id', ghostUser.id)
+          .single();
+
+        if (!profileCheck) {
+          // Ghost auth user with no profile — delete it
+          await supabaseAdmin.auth.admin.deleteUser(ghostUser.id);
+        }
+      }
+    } catch (e) {
+      console.warn('Ghost user cleanup skipped:', e.message);
+    }
   }
 
   // Sign up with Supabase Auth
@@ -148,7 +199,7 @@ app.post('/api/auth/register', rateLimit(60000, 5), async (req, res) => {
 
   if (authError) {
     if (authError.message.includes('already registered')) {
-      return res.status(400).json({ error: 'Email already exists' });
+      return res.status(400).json({ error: 'Email already registered. Try logging in or use a different email.' });
     }
     return res.status(400).json({ error: authError.message });
   }
@@ -158,16 +209,16 @@ app.post('/api/auth/register', rateLimit(60000, 5), async (req, res) => {
 
   const avatar = name.split(' ').map(w => w[0]).join('').toUpperCase().substring(0, 2);
 
-  // Create profile
+  // Create profile (upsert to handle edge cases)
   const { error: profileError } = await supabase
     .from('profiles')
-    .insert({
+    .upsert({
       id: authUser.id,
       user_id: userId || authUser.id.substring(0, 8),
       name,
       email,
       avatar
-    });
+    }, { onConflict: 'id' });
 
   if (profileError) {
     console.error('Profile creation error:', profileError);
@@ -176,7 +227,6 @@ app.post('/api/auth/register', rateLimit(60000, 5), async (req, res) => {
 
   const token = authData.session?.access_token;
   if (!token) {
-    // Email confirmation might be required — still return success
     return res.json({
       token: '',
       user: { id: authUser.id, userId: userId || authUser.id.substring(0, 8), name, email, avatar },
@@ -668,12 +718,120 @@ function mapNote(n) {
   };
 }
 
+// ─── Diagrams ─────────────────────────────────────────────────────────────
+app.get('/api/diagrams', auth, async (req, res) => {
+  const { teamId } = req.query;
+  if (!teamId) return res.status(400).json({ error: 'teamId is required' });
+
+  const { data: diagrams } = await supabase
+    .from('diagrams')
+    .select('*')
+    .eq('team_id', teamId);
+
+  res.json((diagrams || []).map(mapDiagram));
+});
+
+app.post('/api/diagrams', auth, async (req, res) => {
+  const { teamId, title, diagramData } = req.body;
+  if (!teamId || !title) return res.status(400).json({ error: 'Missing fields' });
+
+  const { data: existing, error: checkError } = await supabase
+    .from('diagrams')
+    .select('id')
+    .eq('title', title)
+    .eq('team_id', teamId)
+    .single();
+
+  let diagram;
+
+  if (existing) {
+    // Update existing diagram
+    const { data: updated, error } = await supabase
+      .from('diagrams')
+      .update({ diagram_data: diagramData })
+      .eq('id', existing.id)
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: 'Failed to update diagram' });
+    diagram = updated;
+  } else {
+    // Create new diagram
+    const { data: inserted, error } = await supabase
+      .from('diagrams')
+      .insert({
+        team_id: teamId,
+        title: title,
+        diagram_data: diagramData,
+        created_by: req.user.id
+      })
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: 'Failed to save diagram' });
+    diagram = inserted;
+  }
+
+  const result = mapDiagram(diagram);
+  io.emit('diagram:saved', result);
+  res.json(result);
+});
+
+app.delete('/api/diagrams/:id', auth, async (req, res) => {
+  await supabase.from('diagrams').delete().eq('id', req.params.id);
+  io.emit('diagram:deleted', req.params.id);
+  res.json({ success: true });
+});
+
+function mapDiagram(d) {
+  return {
+    id: d.id,
+    teamId: d.team_id,
+    title: d.title,
+    diagramData: d.diagram_data,
+    createdBy: d.created_by,
+    createdAt: d.created_at
+  };
+}
+
 // ─── Files (Supabase Cloud Storage) ─────────────────────────────────────────
 function formatFileSize(bytes) {
   if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
   if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
   return bytes + ' B';
 }
+
+// Diagnostic: test storage connectivity
+app.get('/api/debug/storage', auth, async (req, res) => {
+  const results = {};
+
+  // 1. Check bucket exists
+  const { data: buckets, error: bucketErr } = await supabaseAdmin.storage.listBuckets();
+  results.buckets = buckets?.map(b => b.name) || [];
+  results.bucketError = bucketErr?.message || null;
+  results.targetBucket = STORAGE_BUCKET;
+  results.bucketExists = results.buckets.includes(STORAGE_BUCKET);
+
+  // 2. Check which client is being used
+  results.usingServiceRole = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  // 3. Try a tiny test upload
+  const testPath = `_test/${Date.now()}.txt`;
+  const testBuffer = Buffer.from('test-upload-' + Date.now());
+  const { data: uploadData, error: uploadErr } = await supabaseAdmin.storage
+    .from(STORAGE_BUCKET)
+    .upload(testPath, testBuffer, { contentType: 'text/plain', upsert: true });
+
+  results.testUpload = uploadData ? 'SUCCESS' : 'FAILED';
+  results.testUploadError = uploadErr ? { message: uploadErr.message, status: uploadErr.statusCode, error: uploadErr.error } : null;
+
+  // 4. If upload succeeded, clean up
+  if (uploadData) {
+    await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([testPath]);
+    results.cleanup = 'done';
+  }
+
+  console.log('Storage diagnostic:', JSON.stringify(results, null, 2));
+  res.json(results);
+});
 
 app.get('/api/files', auth, async (req, res) => {
   const { teamId } = req.query;
@@ -690,8 +848,24 @@ app.post('/api/files/upload', auth, upload.single('file'), async (req, res) => {
   const teamId = req.body.teamId;
   if (!teamId) return res.status(400).json({ error: 'Team is required' });
 
+  const originalName = req.file.originalname;
+  const ext = originalName.includes('.') ? '.' + originalName.split('.').pop() : '';
+  const customName = req.body.customName?.trim();
+
+  // Build display name: customName + original extension, or keep original
+  let displayName;
+  if (customName) {
+    // For the UI display name, we can allow spaces and standard brackets
+    const safeName = customName.replace(/[^a-zA-Z0-9\-_ .()[\]]/g, '').substring(0, 80);
+    displayName = safeName.endsWith(ext) ? safeName : safeName + ext;
+  } else {
+    displayName = sanitize(originalName);
+  }
+
+  // Supabase Storage keys (paths) are strict (AWS S3 rules). We must remove all spaces, brackets, etc.
+  const storageKeySafeName = displayName.replace(/[^a-zA-Z0-9.\-_]/g, '_');
   const sizeStr = formatFileSize(req.file.size);
-  const storagePath = `${teamId}/${Date.now()}-${uuidv4().substring(0, 8)}-${req.file.originalname}`;
+  const storagePath = `${teamId}/${Date.now()}-${uuidv4().substring(0, 8)}-${storageKeySafeName}`;
 
   // Upload buffer to Supabase Storage (using admin client to bypass RLS)
   const { error: storageError } = await supabaseAdmin.storage
@@ -710,7 +884,9 @@ app.post('/api/files/upload', auth, upload.single('file'), async (req, res) => {
     .from('files')
     .insert({
       team_id: teamId,
-      name: sanitize(req.file.originalname),
+      name: displayName,
+      original_name: originalName,
+      custom_name: customName || null,
       size: sizeStr,
       storage_path: storagePath,
       uploaded_by: req.user.id
@@ -729,12 +905,21 @@ app.post('/api/files/upload', auth, upload.single('file'), async (req, res) => {
 });
 
 app.post('/api/files/import-url', auth, async (req, res) => {
-  const { url, teamId } = req.body;
+  const { url, teamId, customName } = req.body;
   if (!url || !teamId) return res.status(400).json({ error: 'URL and team are required' });
 
   try {
     const httpModule = url.startsWith('https') ? require('https') : require('http');
-    const fileName = sanitize(decodeURIComponent(url.split('/').pop().split('?')[0] || 'imported-file'));
+    const rawName = decodeURIComponent(url.split('/').pop().split('?')[0] || 'imported-file');
+    const ext = rawName.includes('.') ? '.' + rawName.split('.').pop() : '';
+
+    let displayName;
+    if (customName?.trim()) {
+      const safeName = customName.trim().replace(/[^a-zA-Z0-9\-_ .()[\]]/g, '').substring(0, 80);
+      displayName = safeName.endsWith(ext) ? safeName : safeName + ext;
+    } else {
+      displayName = sanitize(rawName);
+    }
 
     httpModule.get(url, (response) => {
       if (response.statusCode >= 300 && response.statusCode < 400) {
@@ -749,7 +934,10 @@ app.post('/api/files/import-url', auth, async (req, res) => {
       response.on('end', async () => {
         const buffer = Buffer.concat(chunks);
         const sizeStr = formatFileSize(buffer.length);
-        const storagePath = `${teamId}/${Date.now()}-${uuidv4().substring(0, 8)}-${fileName}`;
+        
+        // Ensure the storage path contains no illegal S3 characters
+        const storageKeySafeName = displayName.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+        const storagePath = `${teamId}/${Date.now()}-${uuidv4().substring(0, 8)}-${storageKeySafeName}`;
 
         const { error: storageError } = await supabaseAdmin.storage
           .from(STORAGE_BUCKET)
@@ -767,7 +955,9 @@ app.post('/api/files/import-url', auth, async (req, res) => {
           .from('files')
           .insert({
             team_id: teamId,
-            name: fileName,
+            name: displayName,
+            original_name: rawName,
+            custom_name: customName?.trim() || null,
             size: sizeStr,
             storage_path: storagePath,
             uploaded_by: req.user.id
@@ -840,6 +1030,8 @@ function mapFile(f) {
     id: f.id,
     teamId: f.team_id,
     name: f.name,
+    originalName: f.original_name,
+    customName: f.custom_name,
     size: f.size,
     storagePath: f.storage_path,
     uploadedBy: f.uploaded_by,
@@ -1503,6 +1695,116 @@ app.use((err, req, res, next) => {
   }
   if (err) return res.status(400).json({ error: err.message });
   next();
+});
+
+// ─── Admin: Cleanup ghost/orphan profiles ────────────────────────────────────
+app.post('/api/admin/cleanup-ghosts', auth, async (req, res) => {
+  // Get all profiles
+  const { data: profiles } = await supabase.from('profiles').select('id, email, name');
+  if (!profiles) return res.json({ cleaned: 0 });
+
+  let cleaned = 0;
+  for (const profile of profiles) {
+    try {
+      const { data: authCheck } = await supabaseAdmin.auth.admin.getUserById(profile.id);
+      if (!authCheck?.user) {
+        // Orphan — remove profile and team memberships
+        await supabase.from('team_members').delete().eq('user_id', profile.id);
+        await supabase.from('profiles').delete().eq('id', profile.id);
+        cleaned++;
+        console.log(`Cleaned ghost profile: ${profile.email} (${profile.id})`);
+      }
+    } catch (e) {
+      // Auth lookup failed — likely orphaned
+      await supabase.from('team_members').delete().eq('user_id', profile.id);
+      await supabase.from('profiles').delete().eq('id', profile.id);
+      cleaned++;
+    }
+  }
+
+  res.json({ success: true, cleaned, total: profiles.length });
+});
+
+// ─── Admin: Delete a specific user by email (hard delete) ────────────────────
+app.post('/api/admin/delete-user', auth, async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email is required' });
+
+  // 1. Find profile
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('email', sanitize(email))
+    .single();
+
+  if (profile) {
+    // Remove from teams, then delete profile
+    await supabase.from('team_members').delete().eq('user_id', profile.id);
+    await supabase.from('tasks').update({ assignee_id: null }).eq('assignee_id', profile.id);
+    await supabase.from('profiles').delete().eq('id', profile.id);
+
+    // Delete from Supabase Auth
+    try {
+      await supabaseAdmin.auth.admin.deleteUser(profile.id);
+    } catch (e) {
+      console.warn('Auth user deletion skipped:', e.message);
+    }
+
+    return res.json({ success: true, message: `User ${email} fully deleted` });
+  }
+
+  // 2. If no profile, check Auth directly
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const { data: userList } = await supabaseAdmin.auth.admin.listUsers();
+      const authUser = userList?.users?.find(u => u.email === email);
+      if (authUser) {
+        await supabaseAdmin.auth.admin.deleteUser(authUser.id);
+        return res.json({ success: true, message: `Auth ghost user ${email} deleted` });
+      }
+    } catch (e) {
+      console.warn('Auth search failed:', e.message);
+    }
+  }
+
+  return res.status(404).json({ error: 'User not found' });
+});
+
+// ─── Admin: Full reset (development only) ────────────────────────────────────
+app.post('/api/admin/reset-all', auth, async (req, res) => {
+  const { confirm } = req.body;
+  if (confirm !== 'RESET_EVERYTHING') {
+    return res.status(400).json({ error: 'Send { confirm: "RESET_EVERYTHING" } to confirm' });
+  }
+
+  try {
+    // Delete in dependency order
+    await supabase.from('files').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await supabase.from('tasks').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await supabase.from('notes').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await supabase.from('team_members').delete().neq('team_id', '00000000-0000-0000-0000-000000000000');
+    await supabase.from('teams').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+
+    // Delete all profiles (auth users remain — they can re-register)
+    await supabase.from('profiles').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+
+    // Optionally delete all auth users too
+    if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      try {
+        const { data: userList } = await supabaseAdmin.auth.admin.listUsers();
+        for (const u of (userList?.users || [])) {
+          await supabaseAdmin.auth.admin.deleteUser(u.id);
+        }
+      } catch (e) {
+        console.warn('Auth user cleanup skipped:', e.message);
+      }
+    }
+
+    res.json({ success: true, message: 'All data wiped. Users can re-register.' });
+  } catch (e) {
+    console.error('Reset error:', e);
+    res.status(500).json({ error: 'Reset failed: ' + e.message });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
