@@ -9,7 +9,6 @@ const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const multer = require('multer');
-const fs = require('fs');
 const { createClient } = require('@supabase/supabase-js');
 
 // ─── Supabase Client ─────────────────────────────────────────────────────────
@@ -24,23 +23,10 @@ const io = new Server(server, { cors: { origin: '*' } });
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname)));
 
-// ─── Uploads Directory ───────────────────────────────────────────────────────
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
-app.use('/uploads', express.static(uploadsDir));
-
-// ─── Multer Setup ────────────────────────────────────────────────────────────
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadsDir),
-  filename: (req, file, cb) => {
-    const uniqueName = `${Date.now()}-${uuidv4().substring(0,8)}-${file.originalname}`;
-    cb(null, uniqueName);
-  }
-});
+// ─── Multer Setup (Memory Storage for Supabase) ─────────────────────────────
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const blocked = ['.exe', '.bat', '.cmd', '.sh', '.msi', '.com', '.scr'];
@@ -49,6 +35,9 @@ const upload = multer({
     cb(null, true);
   }
 });
+
+// ─── Supabase Storage bucket name ────────────────────────────────────────────
+const STORAGE_BUCKET = 'team-files';
 
 // ─── Security: Input Sanitizer ───────────────────────────────────────────────
 function sanitize(str) {
@@ -243,11 +232,6 @@ app.post('/api/auth/reset-password', async (req, res) => {
 
   res.json({ message: 'Password updated successfully! You can now log in.' });
 });
-
-// ─── Page Routes ─────────────────────────────────────────────────────────────
-app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'login.html')));
-app.get('/app', (req, res) => res.sendFile(path.join(__dirname, 'app.html')));
-app.get('/reset-password', (req, res) => res.sendFile(path.join(__dirname, 'reset-password.html')));
 
 // ─── Quick Join via Invite Link ──────────────────────────────────────────────
 app.get('/join/:code', async (req, res) => {
@@ -477,6 +461,13 @@ app.put('/api/tasks/:id', auth, async (req, res) => {
   if (req.body.timerRunning !== undefined) updates.timer_running = req.body.timerRunning;
   if (req.body.timerStart !== undefined) updates.timer_start = req.body.timerStart;
 
+  // Fetch old task to detect status transition to 'done'
+  const { data: oldTask } = await supabase
+    .from('tasks')
+    .select('status, assignee_id')
+    .eq('id', req.params.id)
+    .single();
+
   const { data: task, error } = await supabase
     .from('tasks')
     .update(updates)
@@ -485,6 +476,13 @@ app.put('/api/tasks/:id', auth, async (req, res) => {
     .single();
 
   if (error || !task) return res.status(404).json({ error: 'Not found' });
+
+  // Award XP if task just transitioned to 'done'
+  if (oldTask && oldTask.status !== 'done' && task.status === 'done') {
+    const completedBy = task.assignee_id || req.user.id;
+    await awardXP(completedBy, 25, 'Task completed');
+    await checkAchievements(completedBy, task);
+  }
 
   const result = mapTask(task);
   io.emit('task:updated', result);
@@ -540,6 +538,13 @@ app.post('/api/tasks/:id/timer', auth, async (req, res) => {
     .eq('id', req.params.id)
     .select()
     .single();
+
+  // Award XP when task is completed via timer
+  if (action === 'complete' && updated) {
+    const completedBy = updated.assignee_id || req.user.id;
+    await awardXP(completedBy, 25, 'Task completed via timer');
+    await checkAchievements(completedBy, updated);
+  }
 
   const result = mapTask(updated);
   io.emit('task:updated', result);
@@ -631,7 +636,13 @@ function mapNote(n) {
   };
 }
 
-// ─── Files (Real Upload) ────────────────────────────────────────────────────
+// ─── Files (Supabase Cloud Storage) ─────────────────────────────────────────
+function formatFileSize(bytes) {
+  if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+  if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return bytes + ' B';
+}
+
 app.get('/api/files', auth, async (req, res) => {
   const { teamId } = req.query;
 
@@ -647,11 +658,21 @@ app.post('/api/files/upload', auth, upload.single('file'), async (req, res) => {
   const teamId = req.body.teamId;
   if (!teamId) return res.status(400).json({ error: 'Team is required' });
 
-  const sizeBytes = req.file.size;
-  let sizeStr;
-  if (sizeBytes >= 1048576) sizeStr = (sizeBytes / 1048576).toFixed(1) + ' MB';
-  else if (sizeBytes >= 1024) sizeStr = (sizeBytes / 1024).toFixed(1) + ' KB';
-  else sizeStr = sizeBytes + ' B';
+  const sizeStr = formatFileSize(req.file.size);
+  const storagePath = `${teamId}/${Date.now()}-${uuidv4().substring(0, 8)}-${req.file.originalname}`;
+
+  // Upload buffer to Supabase Storage
+  const { error: storageError } = await supabase.storage
+    .from(STORAGE_BUCKET)
+    .upload(storagePath, req.file.buffer, {
+      contentType: req.file.mimetype,
+      upsert: false
+    });
+
+  if (storageError) {
+    console.error('Storage upload error:', storageError);
+    return res.status(500).json({ error: 'Failed to upload file to cloud storage' });
+  }
 
   const { data: file, error } = await supabase
     .from('files')
@@ -659,13 +680,16 @@ app.post('/api/files/upload', auth, upload.single('file'), async (req, res) => {
       team_id: teamId,
       name: sanitize(req.file.originalname),
       size: sizeStr,
-      stored_name: req.file.filename,
+      storage_path: storagePath,
       uploaded_by: req.user.id
     })
     .select()
     .single();
 
   if (error) return res.status(500).json({ error: 'Failed to save file metadata' });
+
+  // Award achievement for first file upload
+  await checkFileUploadAchievement(req.user.id);
 
   const result = mapFile(file);
   io.emit('file:uploaded', result);
@@ -677,29 +701,34 @@ app.post('/api/files/import-url', auth, async (req, res) => {
   if (!url || !teamId) return res.status(400).json({ error: 'URL and team are required' });
 
   try {
-    const https = url.startsWith('https') ? require('https') : require('http');
+    const httpModule = url.startsWith('https') ? require('https') : require('http');
     const fileName = sanitize(decodeURIComponent(url.split('/').pop().split('?')[0] || 'imported-file'));
-    const storedName = `${Date.now()}-${uuidv4().substring(0, 8)}-${fileName}`;
-    const filePath = path.join(uploadsDir, storedName);
-    const writeStream = fs.createWriteStream(filePath);
 
-    https.get(url, (response) => {
-      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+    httpModule.get(url, (response) => {
+      if (response.statusCode >= 300 && response.statusCode < 400) {
         return res.status(400).json({ error: 'URL redirects are not supported. Use the direct file link.' });
       }
       if (response.statusCode !== 200) {
         return res.status(400).json({ error: 'Failed to download file from URL' });
       }
 
-      let totalBytes = 0;
-      response.on('data', (chunk) => { totalBytes += chunk.length; });
-      response.pipe(writeStream);
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('end', async () => {
+        const buffer = Buffer.concat(chunks);
+        const sizeStr = formatFileSize(buffer.length);
+        const storagePath = `${teamId}/${Date.now()}-${uuidv4().substring(0, 8)}-${fileName}`;
 
-      writeStream.on('finish', async () => {
-        let sizeStr;
-        if (totalBytes >= 1048576) sizeStr = (totalBytes / 1048576).toFixed(1) + ' MB';
-        else if (totalBytes >= 1024) sizeStr = (totalBytes / 1024).toFixed(1) + ' KB';
-        else sizeStr = totalBytes + ' B';
+        const { error: storageError } = await supabase.storage
+          .from(STORAGE_BUCKET)
+          .upload(storagePath, buffer, {
+            contentType: response.headers['content-type'] || 'application/octet-stream',
+            upsert: false
+          });
+
+        if (storageError) {
+          return res.status(500).json({ error: 'Failed to upload to cloud storage' });
+        }
 
         const { data: file } = await supabase
           .from('files')
@@ -707,7 +736,7 @@ app.post('/api/files/import-url', auth, async (req, res) => {
             team_id: teamId,
             name: fileName,
             size: sizeStr,
-            stored_name: storedName,
+            storage_path: storagePath,
             uploaded_by: req.user.id
           })
           .select()
@@ -718,8 +747,8 @@ app.post('/api/files/import-url', auth, async (req, res) => {
         res.json(result);
       });
 
-      writeStream.on('error', () => {
-        res.status(500).json({ error: 'Failed to save file' });
+      response.on('error', () => {
+        res.status(500).json({ error: 'Failed to download file' });
       });
     }).on('error', () => {
       res.status(400).json({ error: 'Failed to fetch URL' });
@@ -727,27 +756,6 @@ app.post('/api/files/import-url', auth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Import failed' });
   }
-});
-
-// Legacy metadata-only upload
-app.post('/api/files', auth, async (req, res) => {
-  const { data: file, error } = await supabase
-    .from('files')
-    .insert({
-      team_id: req.body.teamId,
-      name: sanitize(req.body.name),
-      size: req.body.size || '0 B',
-      stored_name: null,
-      uploaded_by: req.user.id
-    })
-    .select()
-    .single();
-
-  if (error) return res.status(500).json({ error: 'Failed to save file' });
-
-  const result = mapFile(file);
-  io.emit('file:uploaded', result);
-  res.json(result);
 });
 
 app.get('/api/files/:id/download', auth, async (req, res) => {
@@ -758,12 +766,20 @@ app.get('/api/files/:id/download', auth, async (req, res) => {
     .single();
 
   if (!file) return res.status(404).json({ error: 'File not found' });
-  if (!file.stored_name) return res.status(404).json({ error: 'No physical file available for download' });
 
-  const filePath = path.join(uploadsDir, file.stored_name);
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
+  const storagePath = file.storage_path || file.stored_name;
+  if (!storagePath) return res.status(404).json({ error: 'No file available for download' });
 
-  res.download(filePath, file.name);
+  // Generate a signed URL (valid for 1 hour)
+  const { data: signedData, error } = await supabase.storage
+    .from(STORAGE_BUCKET)
+    .createSignedUrl(storagePath, 3600);
+
+  if (error || !signedData) {
+    return res.status(500).json({ error: 'Failed to generate download link' });
+  }
+
+  res.json({ url: signedData.signedUrl, filename: file.name });
 });
 
 app.delete('/api/files/:id', auth, async (req, res) => {
@@ -775,10 +791,10 @@ app.delete('/api/files/:id', auth, async (req, res) => {
 
   if (!file) return res.status(404).json({ error: 'Not found' });
 
-  // Delete physical file if exists
-  if (file.stored_name) {
-    const filePath = path.join(uploadsDir, file.stored_name);
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  // Delete from Supabase Storage
+  const storagePath = file.storage_path || file.stored_name;
+  if (storagePath) {
+    await supabase.storage.from(STORAGE_BUCKET).remove([storagePath]);
   }
 
   await supabase.from('files').delete().eq('id', req.params.id);
@@ -792,7 +808,7 @@ function mapFile(f) {
     teamId: f.team_id,
     name: f.name,
     size: f.size,
-    storedName: f.stored_name,
+    storagePath: f.storage_path,
     uploadedBy: f.uploaded_by,
     uploadedAt: f.uploaded_at
   };
@@ -1091,10 +1107,241 @@ app.get('/api/github/file/:owner/:repo/*', auth, async (req, res) => {
   }
 });
 
-// ─── Socket.io ───────────────────────────────────────────────────────────────
+// ─── Gamification: XP & Achievements ─────────────────────────────────────────
+
+// Award XP to a user and level up if threshold reached
+async function awardXP(userId, amount, reason) {
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('xp_points, level')
+    .eq('id', userId)
+    .single();
+
+  if (!profile) return;
+
+  const newXP = (profile.xp_points || 0) + amount;
+  // Level formula: level up every 200 XP
+  const newLevel = Math.floor(newXP / 200) + 1;
+  const didLevelUp = newLevel > (profile.level || 1);
+
+  await supabase
+    .from('profiles')
+    .update({ xp_points: newXP, level: newLevel })
+    .eq('id', userId);
+
+  // Emit XP update to client
+  io.emit('xp:updated', { userId, xp: newXP, level: newLevel, gained: amount, reason });
+
+  if (didLevelUp) {
+    io.emit('level:up', { userId, level: newLevel });
+  }
+}
+
+// Check and unlock achievements after task completion
+async function checkAchievements(userId, completedTask) {
+  // Get all achievements
+  const { data: allAchievements } = await supabase.from('achievements').select('*');
+  if (!allAchievements) return;
+
+  // Get user's already-unlocked achievements
+  const { data: unlocked } = await supabase
+    .from('user_achievements')
+    .select('achievement_id')
+    .eq('user_id', userId);
+  const unlockedIds = new Set((unlocked || []).map(u => u.achievement_id));
+
+  // Count user's total completed tasks
+  const { count: doneCount } = await supabase
+    .from('tasks')
+    .select('id', { count: 'exact', head: true })
+    .eq('assignee_id', userId)
+    .eq('status', 'done');
+
+  // Count tasks completed today
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const { count: todayCount } = await supabase
+    .from('tasks')
+    .select('id', { count: 'exact', head: true })
+    .eq('assignee_id', userId)
+    .eq('status', 'done')
+    .gte('created_at', today.toISOString());
+
+  // Check time-based conditions
+  const actualMinutes = completedTask.actual_time || 0;
+  const currentHour = new Date().getHours();
+
+  const triggers = {
+    'first_task':       doneCount >= 1,
+    'five_tasks':       doneCount >= 5,
+    'ten_tasks':        doneCount >= 10,
+    'twenty_five_tasks':doneCount >= 25,
+    'speed_demon':      actualMinutes > 0 && actualMinutes < 10,
+    'streak_3':         todayCount >= 3,
+    'night_owl':        currentHour >= 0 && currentHour < 5
+  };
+
+  for (const achievement of allAchievements) {
+    if (unlockedIds.has(achievement.id)) continue;
+    if (!triggers[achievement.key]) continue;
+
+    // Unlock achievement
+    const { error } = await supabase
+      .from('user_achievements')
+      .insert({ user_id: userId, achievement_id: achievement.id });
+
+    if (!error) {
+      // Award bonus XP
+      await awardXP(userId, achievement.xp_reward, `Achievement: ${achievement.title}`);
+
+      // Emit to client
+      io.emit('achievement:unlocked', {
+        userId,
+        achievement: {
+          id: achievement.id,
+          key: achievement.key,
+          title: achievement.title,
+          description: achievement.description,
+          icon: achievement.icon,
+          xpReward: achievement.xp_reward
+        }
+      });
+    }
+  }
+}
+
+// Check first file upload achievement
+async function checkFileUploadAchievement(userId) {
+  const { data: allAchievements } = await supabase
+    .from('achievements')
+    .select('*')
+    .eq('key', 'file_uploader')
+    .single();
+
+  if (!allAchievements) return;
+
+  const { data: already } = await supabase
+    .from('user_achievements')
+    .select('achievement_id')
+    .eq('user_id', userId)
+    .eq('achievement_id', allAchievements.id)
+    .single();
+
+  if (already) return;
+
+  await supabase
+    .from('user_achievements')
+    .insert({ user_id: userId, achievement_id: allAchievements.id });
+
+  await awardXP(userId, allAchievements.xp_reward, `Achievement: ${allAchievements.title}`);
+
+  io.emit('achievement:unlocked', {
+    userId,
+    achievement: {
+      id: allAchievements.id,
+      key: allAchievements.key,
+      title: allAchievements.title,
+      description: allAchievements.description,
+      icon: allAchievements.icon,
+      xpReward: allAchievements.xp_reward
+    }
+  });
+}
+
+// ─── Gamification API Routes ─────────────────────────────────────────────────
+
+// Get user's XP and level
+app.get('/api/xp', auth, async (req, res) => {
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('xp_points, level')
+    .eq('id', req.user.id)
+    .single();
+
+  if (!profile) return res.status(404).json({ error: 'Profile not found' });
+
+  const xp = profile.xp_points || 0;
+  const level = profile.level || 1;
+  const xpForNextLevel = level * 200;
+  const xpInCurrentLevel = xp - ((level - 1) * 200);
+
+  res.json({
+    xp,
+    level,
+    xpInCurrentLevel,
+    xpForNextLevel: 200,
+    progress: Math.min(Math.round((xpInCurrentLevel / 200) * 100), 100)
+  });
+});
+
+// Get all achievements + user's unlock status
+app.get('/api/achievements', auth, async (req, res) => {
+  const { data: allAchievements } = await supabase
+    .from('achievements')
+    .select('*')
+    .order('xp_reward', { ascending: true });
+
+  const { data: userAchievements } = await supabase
+    .from('user_achievements')
+    .select('achievement_id, unlocked_at')
+    .eq('user_id', req.user.id);
+
+  const unlockedMap = {};
+  (userAchievements || []).forEach(ua => {
+    unlockedMap[ua.achievement_id] = ua.unlocked_at;
+  });
+
+  const result = (allAchievements || []).map(a => ({
+    id: a.id,
+    key: a.key,
+    title: a.title,
+    description: a.description,
+    icon: a.icon,
+    xpReward: a.xp_reward,
+    unlocked: !!unlockedMap[a.id],
+    unlockedAt: unlockedMap[a.id] || null
+  }));
+
+  res.json(result);
+});
+
+// ─── Socket.io (with Presence Tracking) ──────────────────────────────────────
+const onlineUsers = new Map(); // Map<socketId, { userId, teamId }>
+
 io.on('connection', (socket) => {
-  socket.on('join:team', (teamId) => socket.join(teamId));
+  socket.on('join:team', ({ teamId, userId }) => {
+    socket.join(teamId);
+
+    if (userId) {
+      onlineUsers.set(socket.id, { userId, teamId });
+      // Broadcast to team that user is online
+      io.to(teamId).emit('team:member_online', { userId });
+
+      // Send current online list to the joining user
+      const teamOnline = [];
+      onlineUsers.forEach((val) => {
+        if (val.teamId === teamId) teamOnline.push(val.userId);
+      });
+      socket.emit('team:online_list', [...new Set(teamOnline)]);
+    }
+  });
+
   socket.on('note:typing', (data) => socket.to(data.teamId).emit('note:typing', data));
+
+  socket.on('disconnect', () => {
+    const userData = onlineUsers.get(socket.id);
+    if (userData) {
+      onlineUsers.delete(socket.id);
+      // Check if user has other active sockets in the same team
+      let stillOnline = false;
+      onlineUsers.forEach((val) => {
+        if (val.userId === userData.userId && val.teamId === userData.teamId) stillOnline = true;
+      });
+      if (!stillOnline) {
+        io.to(userData.teamId).emit('team:member_offline', { userId: userData.userId });
+      }
+    }
+  });
 });
 
 // ─── Error Handler for Multer ────────────────────────────────────────────────
@@ -1108,4 +1355,4 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`\n✅ SyncBoard running at http://localhost:${PORT}\n\nPages:\n  Landing:  http://localhost:${PORT}/\n  Login:    http://localhost:${PORT}/login\n  App:      http://localhost:${PORT}/app\n\n🔗 Connected to Supabase: ${process.env.SUPABASE_URL}\n`));
+server.listen(PORT, () => console.log(`\n✅ TeamSync API running at http://localhost:${PORT}\n\nFront-end: React (Vite) in /client directory\n🎮 Gamification: XP + Achievements active\n☁️  Storage: Supabase Cloud\n🔗 Connected to Supabase: ${process.env.SUPABASE_URL}\n`));
