@@ -1,155 +1,297 @@
-import React, { useState } from 'react';
-import { motion } from 'framer-motion';
-import { LogOut, LayoutDashboard, CheckSquare, Users, Settings, Trophy } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { LogOut, LayoutDashboard, FileText, FolderOpen, Code2, BarChart3, Trophy, Sun, Moon, Focus, PenTool } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useTheme } from '../lib/ThemeContext';
+import socket from '../lib/socket';
+
+// Components
+import TeamManager from '../components/TeamManager';
 import XpBar from '../components/XpBar';
 import AchievementToast from '../components/AchievementToast';
 import AchievementsPanel from '../components/AchievementsPanel';
+import TaskBoard from '../components/TaskBoard';
+import FilesPanel from '../components/FilesPanel';
+import NotesPanel from '../components/NotesPanel';
+import GitHubPanel from '../components/GitHubPanel';
+import NotificationsDropdown from '../components/NotificationsDropdown';
+import SearchBar from '../components/SearchBar';
+import AnalyticsPanel from '../components/AnalyticsPanel';
+import UserProfile from '../components/UserProfile';
+import DailyProgress from '../components/DailyProgress';
+import QuickAddTask from '../components/QuickAddTask';
+import FocusMode from '../components/FocusMode';
+import WhiteboardPanel from '../components/WhiteboardPanel';
+import { api } from '../lib/api';
 
 export default function DashboardPage({ session }) {
   const [activeTab, setActiveTab] = useState('board');
+  const [currentTeam, setCurrentTeam] = useState(null);
+  const [members, setMembers] = useState([]);
+  const [onlineUsers, setOnlineUsers] = useState([]);
+  const [profileUserId, setProfileUserId] = useState(null);
+  const [focusTask, setFocusTask] = useState(null);
+  const [focusOpen, setFocusOpen] = useState(false);
   const currentUserId = session?.user?.id;
+  const { theme, toggle: toggleTheme } = useTheme();
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-  };
+  useEffect(() => {
+    if (!currentTeam) return;
+    const fetchMembers = async () => {
+      const data = await api(`/api/teams/${currentTeam.id}/members`);
+      if (data && Array.isArray(data)) {
+        const seen = new Set();
+        setMembers(data.filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true; }));
+      }
+    };
+    fetchMembers();
+    socket.emit('join:team', { teamId: currentTeam.id, userId: currentUserId });
+
+    const handleOnline = ({ userId }) => setOnlineUsers(prev => [...new Set([...prev, userId])]);
+    const handleOffline = ({ userId }) => setOnlineUsers(prev => prev.filter(id => id !== userId));
+    const handleOnlineList = (list) => setOnlineUsers(list);
+
+    socket.on('team:member_online', handleOnline);
+    socket.on('team:member_offline', handleOffline);
+    socket.on('team:online_list', handleOnlineList);
+
+    return () => {
+      socket.off('team:member_online', handleOnline);
+      socket.off('team:member_offline', handleOffline);
+      socket.off('team:online_list', handleOnlineList);
+    };
+  }, [currentTeam, currentUserId]);
+
+  const handleLogout = async () => { await supabase.auth.signOut(); };
+  const isLeader = currentTeam?.ownerId === currentUserId;
+
+  // Focus Mode — find the best task and open overlay
+  const openFocusMode = useCallback(async () => {
+    if (!currentTeam) return;
+    try {
+      const tasks = await api(`/api/tasks?teamId=${currentTeam.id}`);
+      if (!tasks || !Array.isArray(tasks) || tasks.length === 0) {
+        alert('No tasks available. Create a task first!');
+        return;
+      }
+      const myActive = tasks.filter(t => t.status !== 'done' && t.assigneeId === currentUserId);
+      if (myActive.length === 0) {
+        // Fallback: any active task
+        const anyActive = tasks.filter(t => t.status !== 'done');
+        if (anyActive.length === 0) { alert('All tasks are done!'); return; }
+        const withDl = anyActive.filter(t => t.deadline).sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
+        setFocusTask(withDl[0] || anyActive[0]);
+      } else {
+        const withDl = myActive.filter(t => t.deadline).sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
+        setFocusTask(withDl[0] || myActive[0]);
+      }
+      setFocusOpen(true);
+    } catch (e) {
+      console.error('Focus mode error:', e);
+    }
+  }, [currentTeam, currentUserId]);
+
+  const handleFocusTimer = useCallback(async (id, action) => {
+    await api(`/api/tasks/${id}/timer`, 'POST', { action });
+    // Refresh the focus task
+    if (currentTeam) {
+      const tasks = await api(`/api/tasks?teamId=${currentTeam.id}`);
+      if (tasks && Array.isArray(tasks)) {
+        const updated = tasks.find(t => t.id === id);
+        if (updated) setFocusTask(updated);
+      }
+    }
+  }, [currentTeam]);
+
+  const closeFocusMode = () => { setFocusOpen(false); setFocusTask(null); };
 
   const navItems = [
     { icon: LayoutDashboard, label: 'Board', key: 'board' },
-    { icon: CheckSquare, label: 'Tasks', key: 'tasks' },
-    { icon: Users, label: 'Team', key: 'team' },
+    { icon: FileText, label: 'Notes', key: 'notes' },
+    { icon: FolderOpen, label: 'Files', key: 'files' },
+    { icon: PenTool, label: 'Whiteboard', key: 'whiteboard' },
+    { icon: Code2, label: 'GitHub', key: 'github' },
+    { icon: BarChart3, label: 'Analytics', key: 'analytics' },
     { icon: Trophy, label: 'Achievements', key: 'achievements' },
-    { icon: Settings, label: 'Settings', key: 'settings' }
   ];
 
+  const tabTitles = {
+    board: 'Task Board', notes: 'Notes', files: 'Files', whiteboard: 'Whiteboard',
+    github: 'GitHub', analytics: 'Analytics', achievements: 'Achievements',
+  };
+
   return (
-    <div className="flex h-screen bg-[#0d0c13] text-gray-200 overflow-hidden font-sans">
-      
-      {/* Achievement Toast Overlay */}
+    <div className="flex h-screen overflow-hidden font-sans" style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
       <AchievementToast currentUserId={currentUserId} />
 
-      {/* Sidebar Navigation */}
-      <motion.nav 
-        initial={{ x: -100, opacity: 0 }}
-        animate={{ x: 0, opacity: 1 }}
-        className="glass-panel w-20 md:w-64 flex flex-col justify-between py-6 px-4 m-4 rounded-3xl z-10"
-      >
-        <div>
-          <div className="flex items-center justify-center md:justify-start gap-4 mb-10 px-2">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-purple-600 to-blue-500 flex items-center justify-center font-bold text-white shadow-lg shadow-purple-500/20">
-              T
-            </div>
-            <h2 className="hidden md:block font-bold text-xl tracking-wide bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-blue-400">TeamSync</h2>
+      {/* Focus Mode Overlay */}
+      <AnimatePresence>
+        {focusOpen && focusTask && (
+          <FocusMode task={focusTask} onClose={closeFocusMode} onTimer={handleFocusTimer} />
+        )}
+      </AnimatePresence>
+
+      {/* Sidebar */}
+      <motion.nav initial={{ x: -100, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
+        className="glass-panel w-20 lg:w-64 flex flex-col justify-between py-5 px-3 lg:px-4 m-3 rounded-3xl z-10 flex-shrink-0">
+        <div className="space-y-1 overflow-y-auto">
+          {/* Logo — click to go to Board */}
+          <div className="flex items-center justify-center lg:justify-start gap-3 mb-5 px-1">
+            <button
+              onClick={() => setActiveTab('board')}
+              className="w-10 h-10 rounded-xl bg-gradient-to-tr from-purple-600 to-blue-500 flex items-center justify-center font-bold text-white shadow-lg shadow-purple-500/20 cursor-pointer hover:scale-105 transition-transform"
+              title="Go to Board"
+            >T</button>
+            <button onClick={() => setActiveTab('board')} className="hidden lg:block">
+              <h2 className="font-bold text-xl tracking-wide bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-blue-400 hover:from-purple-300 hover:to-blue-300 transition-all">TeamSync</h2>
+            </button>
           </div>
-          
-          <ul className="space-y-4">
+
+          {/* Team Selector */}
+          <div className="mb-4 hidden lg:block">
+            <TeamManager currentTeam={currentTeam} onTeamChange={setCurrentTeam} session={session} />
+          </div>
+
+          {/* Online members — click to view profile */}
+          {currentTeam && members.length > 0 && (
+            <div className="mb-4 hidden lg:block">
+              <p className="text-[10px] font-bold uppercase tracking-widest mb-2 px-1" style={{ color: 'var(--text-muted)' }}>
+                Team ({onlineUsers.length} online)
+              </p>
+              <div className="flex flex-wrap gap-1.5 px-1">
+                {members.map(m => (
+                  <button key={m.id} className="relative group" title={`${m.name}${m.role === 'leader' ? ' (Owner)' : ''}`}
+                    onClick={() => setProfileUserId(m.id)}>
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-all cursor-pointer hover:scale-110 ${
+                      onlineUsers.includes(m.id)
+                        ? 'bg-gradient-to-br from-purple-500 to-blue-500 border-green-400 text-white'
+                        : 'border-white/10 text-gray-500'
+                    }`} style={{ backgroundColor: onlineUsers.includes(m.id) ? undefined : 'var(--input-bg)' }}>
+                      {m.avatar || m.name?.charAt(0)}
+                    </div>
+                    {onlineUsers.includes(m.id) && (
+                      <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 rounded-full border-2" style={{ borderColor: 'var(--bg-primary)' }} />
+                    )}
+                    {m.role === 'leader' && (
+                      <div className="absolute -top-1 -right-1 text-[8px]">👑</div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Nav Items */}
+          <ul className="space-y-1">
             {navItems.map((item) => (
               <li key={item.key}>
-                <button
-                  onClick={() => setActiveTab(item.key)}
-                  className={`w-full flex items-center justify-center md:justify-start gap-4 p-3 rounded-2xl transition-all ${
+                <button onClick={() => setActiveTab(item.key)}
+                  className={`w-full flex items-center justify-center lg:justify-start gap-3 p-3 rounded-2xl transition-all ${
                     activeTab === item.key
-                      ? 'bg-white/10 text-white shadow-md shadow-black/10'
-                      : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
-                  }`}
-                >
+                      ? 'bg-purple-500/15 text-purple-400 shadow-md shadow-purple-500/5'
+                      : 'hover:bg-white/5'
+                  }`} style={{ color: activeTab === item.key ? undefined : 'var(--text-secondary)' }}>
                   <item.icon className="w-5 h-5" />
-                  <span className="hidden md:block font-medium">{item.label}</span>
+                  <span className="hidden lg:block text-sm font-medium">{item.label}</span>
                 </button>
               </li>
             ))}
           </ul>
+
+          {/* Focus Mode Button */}
+          {currentTeam && (
+            <button onClick={openFocusMode}
+              className="w-full flex items-center justify-center lg:justify-start gap-3 p-3 rounded-2xl text-purple-400 bg-purple-500/10 hover:bg-purple-500/20 transition-all mt-3 cursor-pointer">
+              <Focus className="w-5 h-5" />
+              <span className="hidden lg:block text-sm font-medium">Focus Mode</span>
+            </button>
+          )}
         </div>
-        
-        <button onClick={handleLogout} className="flex items-center justify-center md:justify-start gap-4 p-3 rounded-2xl text-red-400 hover:bg-red-400/10 transition-all">
-          <LogOut className="w-5 h-5" />
-          <span className="hidden md:block font-medium">Logout</span>
-        </button>
+
+        {/* Bottom */}
+        <div className="space-y-2">
+          <button onClick={toggleTheme}
+            className="w-full flex items-center justify-center lg:justify-start gap-3 p-3 rounded-2xl transition-all hover:bg-white/5 cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
+            {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            <span className="hidden lg:block text-sm font-medium">{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
+          </button>
+          <button onClick={handleLogout}
+            className="w-full flex items-center justify-center lg:justify-start gap-3 p-3 rounded-2xl text-red-400 hover:bg-red-400/10 transition-all cursor-pointer">
+            <LogOut className="w-5 h-5" />
+            <span className="hidden lg:block text-sm font-medium">Logout</span>
+          </button>
+        </div>
       </motion.nav>
 
-      {/* Main Content Area */}
-      <main className="flex-1 p-4 md:p-8 overflow-y-auto">
-        <header className="mb-8 flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-bold text-white mb-2">
-              {activeTab === 'achievements' ? 'Achievements' : 'Welcome back!'}
-            </h1>
-            <p className="text-gray-400 font-medium tracking-wide">
-              {activeTab === 'achievements' ? 'Track your progress and unlock rewards.' : 'Ready for a crunch session?'}
-            </p>
-          </div>
+      {/* Main Content */}
+      <main className="flex-1 p-4 lg:p-6 overflow-y-auto">
+        {/* Header */}
+        <header className="mb-5 flex justify-between items-center flex-wrap gap-3">
           <div className="flex items-center gap-4">
-            {/* XP Bar */}
-            <XpBar currentUserId={currentUserId} />
-            {/* User Avatar */}
-            <div className="w-12 h-12 rounded-full border border-white/20 bg-white/5 flex items-center justify-center text-xl font-bold backdrop-blur-md">
-              {session?.user?.email?.charAt(0).toUpperCase()}
+            <div>
+              <h1 className="text-2xl font-bold">{tabTitles[activeTab]}</h1>
+              {currentTeam && <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>{currentTeam.name}</p>}
             </div>
+            {currentTeam && <DailyProgress />}
+          </div>
+          <div className="flex items-center gap-3">
+            <SearchBar />
+            <NotificationsDropdown userId={currentUserId} />
+            <XpBar currentUserId={currentUserId} />
+            <button
+              onClick={() => setProfileUserId(currentUserId)}
+              className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold cursor-pointer hover:ring-2 hover:ring-purple-500 transition-all"
+              style={{ background: 'var(--input-bg)', border: '1px solid var(--border)' }}
+              title="View Profile"
+            >
+              {session?.user?.email?.charAt(0).toUpperCase()}
+            </button>
           </div>
         </header>
 
-        {/* Tab Content */}
-        {activeTab === 'achievements' ? (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="glass-panel rounded-3xl p-6"
-          >
-            <AchievementsPanel />
+        {/* Content */}
+        {!currentTeam ? (
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+            className="flex flex-col items-center justify-center h-[60vh]">
+            <div className="text-6xl mb-6">👥</div>
+            <h2 className="text-2xl font-bold mb-2">Welcome to TeamSync!</h2>
+            <p className="mb-6 text-center max-w-md" style={{ color: 'var(--text-secondary)' }}>Create a new team or join an existing one to get started.</p>
+            <div className="w-full max-w-sm">
+              <TeamManager currentTeam={currentTeam} onTeamChange={setCurrentTeam} session={session} />
+            </div>
           </motion.div>
         ) : (
-          /* Default Bento Box Layout */
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 auto-rows-[200px]">
-            {/* Main Tasks Box */}
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
-              className="glass-panel md:col-span-2 md:row-span-2 rounded-3xl p-6 relative overflow-hidden group"
-            >
-              <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none" />
-              <h3 className="text-xl font-semibold mb-4 text-white">Active Tasks</h3>
-              <div className="space-y-3">
-                <div className="p-4 rounded-2xl bg-white/5 border border-white/5 flex justify-between items-center">
-                  <span className="text-gray-300">Migrate app to React ⚛️</span>
-                  <span className="px-3 py-1 rounded-full bg-purple-500/20 text-purple-300 text-sm font-medium border border-purple-500/20">In Progress</span>
-                </div>
-                <div className="p-4 rounded-2xl bg-white/5 border border-white/5 flex justify-between items-center">
-                  <span className="text-gray-300">Implement Gen-Z UI 💅</span>
-                  <span className="px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 text-sm font-medium border border-blue-500/20">To Do</span>
-                </div>
-              </div>
-            </motion.div>
-
-            {/* Pomodoro/Timer Box */}
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
-              className="glass-panel rounded-3xl p-6 flex flex-col items-center justify-center text-center relative overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 z-0" />
-              <h3 className="text-sm font-medium text-gray-400 uppercase tracking-widest mb-2 z-10">Crunch Time</h3>
-              <div className="text-5xl font-black font-mono text-transparent bg-clip-text bg-gradient-to-b from-white to-gray-400 z-10 drop-shadow-md">
-                25:00
-              </div>
-              <button className="mt-6 font-semibold bg-white text-black px-6 py-2 rounded-full shadow-lg hover:scale-105 active:scale-95 transition-transform z-10">
-                Start
-              </button>
-            </motion.div>
-
-            {/* Team Vibe / Streak Box */}
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
-              className="glass-panel rounded-3xl p-6 relative"
-            >
-              <h3 className="text-lg font-semibold mb-2">Team Vibe Check</h3>
-              <p className="text-sm text-gray-400 mb-4">No one is currently online. 😴</p>
-              <div className="absolute bottom-6 left-6 right-6 p-4 rounded-2xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center gap-3">
-                <span className="text-2xl">🔥</span>
-                <span className="font-bold text-orange-200">5 Day Streak!</span>
-              </div>
-            </motion.div>
-
-          </div>
+          <motion.div key={activeTab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.15 }}>
+            {activeTab === 'board' && <TaskBoard teamId={currentTeam.id} session={session} />}
+            {activeTab === 'notes' && <NotesPanel teamId={currentTeam.id} />}
+            {activeTab === 'files' && <FilesPanel teamId={currentTeam.id} />}
+            {activeTab === 'whiteboard' && <WhiteboardPanel teamId={currentTeam.id} />}
+            {activeTab === 'github' && <GitHubPanel teamId={currentTeam.id} currentTeam={currentTeam} isLeader={isLeader} onTeamUpdate={() => {
+              // Refresh team data when repo is linked/unlinked
+              api(`/api/teams`).then(teams => {
+                if (teams && Array.isArray(teams)) {
+                  const updated = teams.find(t => t.id === currentTeam.id);
+                  if (updated) setCurrentTeam(updated);
+                }
+              });
+            }} />}
+            {activeTab === 'analytics' && <AnalyticsPanel teamId={currentTeam.id} />}
+            {activeTab === 'achievements' && (
+              <div className="glass-panel rounded-3xl p-6"><AchievementsPanel /></div>
+            )}
+          </motion.div>
         )}
       </main>
+
+      {/* Quick Add FAB */}
+      {currentTeam && activeTab === 'board' && (
+        <QuickAddTask teamId={currentTeam.id} userId={currentUserId} />
+      )}
+
+      {/* User Profile Modal */}
+      <AnimatePresence>
+        {profileUserId && <UserProfile userId={profileUserId} onClose={() => setProfileUserId(null)} />}
+      </AnimatePresence>
     </div>
   );
 }

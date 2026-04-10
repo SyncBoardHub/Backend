@@ -1,47 +1,58 @@
-// Centralized API helper — mirrors the old vanilla `api()` function
-const API_BASE = import.meta.env.VITE_API_URL || '';
+// Centralized API helper — uses Supabase session token
+import { supabase } from './supabase';
+
+async function getToken() {
+  const { data: { session } } = await supabase.auth.getSession();
+  return session?.access_token || null;
+}
 
 export async function api(path, method = 'GET', body = null) {
-  const token = localStorage.getItem('ts_token');
+  const token = await getToken();
   const opts = {
     method,
     headers: {
-      'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
   };
+  if (token) opts.headers['Authorization'] = `Bearer ${token}`;
   if (body) opts.body = JSON.stringify(body);
 
-  const res = await fetch(`${API_BASE}${path}`, opts);
-  if (res.status === 401) {
-    localStorage.removeItem('ts_token');
-    localStorage.removeItem('ts_user');
-    window.location.href = '/login';
+  try {
+    const res = await fetch(path, opts);
+    if (res.status === 401) {
+      await supabase.auth.signOut();
+      return null;
+    }
+    return res.json();
+  } catch (err) {
+    console.error('API fetch error:', err);
     return null;
   }
-  return res.json();
 }
 
 export async function apiUpload(path, formData) {
-  const token = localStorage.getItem('ts_token');
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}` },
-    body: formData,
-  });
-  if (res.status === 401) {
-    localStorage.removeItem('ts_token');
-    localStorage.removeItem('ts_user');
-    window.location.href = '/login';
+  const token = await getToken();
+  try {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      body: formData,
+    });
+    if (res.status === 401) {
+      await supabase.auth.signOut();
+      return null;
+    }
+    return res.json();
+  } catch (err) {
+    console.error('API upload error:', err);
     return null;
   }
-  return res.json();
 }
 
 export async function apiDownload(path) {
-  const token = localStorage.getItem('ts_token');
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Authorization': `Bearer ${token}` },
+  const token = await getToken();
+  const res = await fetch(path, {
+    headers: token ? { 'Authorization': `Bearer ${token}` } : {},
   });
   if (!res.ok) throw new Error('Download failed');
   const disposition = res.headers.get('content-disposition');

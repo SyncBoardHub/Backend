@@ -1,6 +1,7 @@
 import { io } from 'socket.io-client';
 
-const API_BASE = import.meta.env.VITE_API_URL || '';
-const socket = io(API_BASE || window.location.origin);
+// In dev, Vite proxy handles /socket.io -> localhost:3000
+// In prod, same origin serves both
+const socket = io();
 
 export default socket;

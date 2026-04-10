@@ -17,6 +17,11 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY
 );
 
+// Admin client for storage (bypasses RLS — safe since this is server-side only)
+const supabaseAdmin = process.env.SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+  : supabase;
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
@@ -72,13 +77,34 @@ async function auth(req, res, next) {
     if (error || !user) return res.status(401).json({ error: 'Unauthorized' });
 
     // Get profile
-    const { data: profile } = await supabase
+    let { data: profile } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', user.id)
       .single();
 
-    if (!profile) return res.status(401).json({ error: 'Profile not found' });
+    // Auto-create profile if missing (user signed up via Supabase Auth directly)
+    if (!profile) {
+      const name = user.user_metadata?.full_name || user.user_metadata?.name || user.email.split('@')[0];
+      const avatar = name.split(' ').map(w => w[0]).join('').toUpperCase().substring(0, 2);
+      const { data: newProfile, error: createError } = await supabase
+        .from('profiles')
+        .insert({
+          id: user.id,
+          user_id: user.id.substring(0, 8),
+          name,
+          email: user.email,
+          avatar
+        })
+        .select()
+        .single();
+
+      if (createError) {
+        console.error('Auto-create profile error:', createError);
+        return res.status(500).json({ error: 'Failed to create profile' });
+      }
+      profile = newProfile;
+    }
 
     req.user = {
       id: profile.id,
@@ -412,20 +438,23 @@ app.post('/api/tasks', auth, async (req, res) => {
     }
   }
 
+  const deadlineVal = req.body.deadline || req.body.dueDate || null;
+  const insertData = {
+    title: sanitize(req.body.title),
+    description: sanitize(req.body.description),
+    team_id: teamId,
+    status: req.body.status || 'planned',
+    assignee_id: assigneeId,
+    estimated_time: req.body.estimatedTime || 60,
+    due_date: deadlineVal,
+    actual_time: 0,
+    timer_running: false,
+    timer_start: null
+  };
+
   const { data: task, error } = await supabase
     .from('tasks')
-    .insert({
-      title: sanitize(req.body.title),
-      description: sanitize(req.body.description),
-      team_id: teamId,
-      status: req.body.status || 'planned',
-      assignee_id: assigneeId,
-      estimated_time: req.body.estimatedTime || 60,
-      due_date: req.body.dueDate || null,
-      actual_time: 0,
-      timer_running: false,
-      timer_start: null
-    })
+    .insert(insertData)
     .select()
     .single();
 
@@ -458,6 +487,7 @@ app.put('/api/tasks/:id', auth, async (req, res) => {
   if (req.body.estimatedTime !== undefined) updates.estimated_time = req.body.estimatedTime;
   if (req.body.actualTime !== undefined) updates.actual_time = req.body.actualTime;
   if (req.body.dueDate !== undefined) updates.due_date = req.body.dueDate;
+  if (req.body.deadline !== undefined) updates.due_date = req.body.deadline;
   if (req.body.timerRunning !== undefined) updates.timer_running = req.body.timerRunning;
   if (req.body.timerStart !== undefined) updates.timer_start = req.body.timerStart;
 
@@ -563,6 +593,8 @@ function mapTask(t) {
     estimatedTime: t.estimated_time,
     actualTime: t.actual_time,
     dueDate: t.due_date,
+    deadline: t.due_date,
+    difficulty: t.difficulty || null,
     timerRunning: t.timer_running,
     timerStart: t.timer_start,
     createdAt: t.created_at
@@ -661,8 +693,8 @@ app.post('/api/files/upload', auth, upload.single('file'), async (req, res) => {
   const sizeStr = formatFileSize(req.file.size);
   const storagePath = `${teamId}/${Date.now()}-${uuidv4().substring(0, 8)}-${req.file.originalname}`;
 
-  // Upload buffer to Supabase Storage
-  const { error: storageError } = await supabase.storage
+  // Upload buffer to Supabase Storage (using admin client to bypass RLS)
+  const { error: storageError } = await supabaseAdmin.storage
     .from(STORAGE_BUCKET)
     .upload(storagePath, req.file.buffer, {
       contentType: req.file.mimetype,
@@ -670,8 +702,8 @@ app.post('/api/files/upload', auth, upload.single('file'), async (req, res) => {
     });
 
   if (storageError) {
-    console.error('Storage upload error:', storageError);
-    return res.status(500).json({ error: 'Failed to upload file to cloud storage' });
+    console.error('Storage upload error:', JSON.stringify(storageError, null, 2));
+    return res.status(500).json({ error: `Storage error: ${storageError.message || 'Failed to upload'}` });
   }
 
   const { data: file, error } = await supabase
@@ -719,7 +751,7 @@ app.post('/api/files/import-url', auth, async (req, res) => {
         const sizeStr = formatFileSize(buffer.length);
         const storagePath = `${teamId}/${Date.now()}-${uuidv4().substring(0, 8)}-${fileName}`;
 
-        const { error: storageError } = await supabase.storage
+        const { error: storageError } = await supabaseAdmin.storage
           .from(STORAGE_BUCKET)
           .upload(storagePath, buffer, {
             contentType: response.headers['content-type'] || 'application/octet-stream',
@@ -727,7 +759,8 @@ app.post('/api/files/import-url', auth, async (req, res) => {
           });
 
         if (storageError) {
-          return res.status(500).json({ error: 'Failed to upload to cloud storage' });
+          console.error('URL import storage error:', JSON.stringify(storageError, null, 2));
+          return res.status(500).json({ error: `Storage error: ${storageError.message || 'Failed to upload'}` });
         }
 
         const { data: file } = await supabase
@@ -771,7 +804,7 @@ app.get('/api/files/:id/download', auth, async (req, res) => {
   if (!storagePath) return res.status(404).json({ error: 'No file available for download' });
 
   // Generate a signed URL (valid for 1 hour)
-  const { data: signedData, error } = await supabase.storage
+  const { data: signedData, error } = await supabaseAdmin.storage
     .from(STORAGE_BUCKET)
     .createSignedUrl(storagePath, 3600);
 
@@ -794,7 +827,7 @@ app.delete('/api/files/:id', auth, async (req, res) => {
   // Delete from Supabase Storage
   const storagePath = file.storage_path || file.stored_name;
   if (storagePath) {
-    await supabase.storage.from(STORAGE_BUCKET).remove([storagePath]);
+    await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
   }
 
   await supabase.from('files').delete().eq('id', req.params.id);
@@ -1062,6 +1095,29 @@ app.post('/api/teams/:id/github', auth, async (req, res) => {
   res.json({ success: true, githubRepo });
 });
 
+// Unlink GitHub repo
+app.delete('/api/teams/:id/github', auth, async (req, res) => {
+  const teamId = req.params.id;
+
+  const { data: team } = await supabase
+    .from('teams')
+    .select('owner_id')
+    .eq('id', teamId)
+    .single();
+
+  if (!team) return res.status(404).json({ error: 'Team not found' });
+  if (team.owner_id !== req.user.id) {
+    return res.status(403).json({ error: 'Only the team leader can unlink a GitHub repo' });
+  }
+
+  await supabase
+    .from('teams')
+    .update({ github_repo: null })
+    .eq('id', teamId);
+
+  res.json({ success: true });
+});
+
 // Proxy GitHub API — browse repo contents
 app.get('/api/github/contents/:owner/:repo', auth, async (req, res) => {
   const { owner, repo } = req.params;
@@ -1105,6 +1161,101 @@ app.get('/api/github/file/:owner/:repo/*', auth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch file from GitHub' });
   }
+});
+
+// ─── Daily Progress & Streak ─────────────────────────────────────────────────
+app.get('/api/daily-progress', auth, async (req, res) => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayISO = today.toISOString();
+
+  // Get user's team memberships
+  const { data: memberships } = await supabase
+    .from('team_members')
+    .select('team_id')
+    .eq('user_id', req.user.id);
+
+  if (!memberships || !memberships.length) {
+    return res.json({ assignedToday: 0, completedToday: 0, streak: 0, totalWorkMinutes: 0 });
+  }
+  const teamIds = memberships.map(m => m.team_id);
+
+  // Tasks assigned to this user in their teams
+  const { data: allTasks } = await supabase
+    .from('tasks')
+    .select('*')
+    .in('team_id', teamIds)
+    .eq('assignee_id', req.user.id);
+
+  const tasks = allTasks || [];
+  const completedToday = tasks.filter(t => t.status === 'done' && t.updated_at && new Date(t.updated_at) >= today).length;
+  const activeTasks = tasks.filter(t => t.status !== 'done').length;
+  const totalWorkMinutes = tasks.reduce((sum, t) => sum + (t.actual_time || 0), 0);
+
+  // Calculate streak (consecutive days with at least 1 completion)
+  let streak = 0;
+  const checkDate = new Date();
+  checkDate.setHours(0, 0, 0, 0);
+  for (let i = 0; i < 365; i++) {
+    const dayStart = new Date(checkDate);
+    dayStart.setDate(dayStart.getDate() - i);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+    const completed = tasks.some(t =>
+      t.status === 'done' && t.updated_at &&
+      new Date(t.updated_at) >= dayStart && new Date(t.updated_at) < dayEnd
+    );
+    if (completed) streak++;
+    else if (i > 0) break; // Don't break on today if nothing done yet
+  }
+
+  res.json({ assignedToday: activeTasks, completedToday, streak, totalWorkMinutes });
+});
+
+// ─── User Profile ────────────────────────────────────────────────────────────
+app.get('/api/user-profile/:userId', auth, async (req, res) => {
+  const userId = req.params.userId;
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single();
+
+  if (!profile) return res.status(404).json({ error: 'User not found' });
+
+  // Get user's task stats
+  const { data: tasks } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('assignee_id', userId);
+
+  const allTasks = tasks || [];
+  const completed = allTasks.filter(t => t.status === 'done').length;
+  const active = allTasks.filter(t => t.status === 'in progress').length;
+  const missed = allTasks.filter(t => {
+    const dl = t.deadline || t.due_date;
+    return dl && new Date(dl) < new Date() && t.status !== 'done';
+  }).length;
+
+  // Recent activity (last 10 completed tasks)
+  const recentCompleted = allTasks
+    .filter(t => t.status === 'done')
+    .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
+    .slice(0, 10)
+    .map(t => ({ title: t.title, completedAt: t.updated_at }));
+
+  res.json({
+    id: profile.id,
+    name: profile.name,
+    email: profile.email,
+    avatar: profile.avatar,
+    xp: profile.xp_points || 0,
+    level: profile.level || 1,
+    joinedAt: profile.created_at,
+    stats: { total: allTasks.length, completed, active, missed },
+    recentActivity: recentCompleted
+  });
 });
 
 // ─── Gamification: XP & Achievements ─────────────────────────────────────────
