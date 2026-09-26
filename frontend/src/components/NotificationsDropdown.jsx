@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bell, Check, CheckCheck, X } from 'lucide-react';
+import { Bell, CheckCheck } from 'lucide-react';
 import { api } from '../lib/api';
 import socket from '../lib/socket';
 
@@ -8,19 +8,35 @@ export default function NotificationsDropdown() {
   const [notifications, setNotifications] = useState([]);
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const refreshTimeout = useRef(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   const fetchNotifications = async () => {
-    const data = await api('/api/notifications');
-    if (data && Array.isArray(data)) setNotifications(data);
+    setLoading(true);
+    setError('');
+    try {
+      const data = await api('/api/notifications');
+      if (!data || !Array.isArray(data)) throw new Error('Notifications could not be loaded.');
+      setNotifications(data);
+    } catch (requestError) {
+      setError(requestError.message || 'Notifications could not be loaded.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    fetchNotifications();
+    void fetchNotifications();
     const clock = setInterval(() => setNow(Date.now()), 60000);
-    const handleNew = () => fetchNotifications();
+    const handleNew = () => {
+      window.clearTimeout(refreshTimeout.current);
+      refreshTimeout.current = window.setTimeout(() => { void fetchNotifications(); }, 500);
+    };
     socket.on('notification:new', handleNew);
     return () => {
       clearInterval(clock);
+      window.clearTimeout(refreshTimeout.current);
       socket.off('notification:new', handleNew);
     };
   }, []);
@@ -49,7 +65,7 @@ export default function NotificationsDropdown() {
 
   return (
     <div className="relative">
-      <button onClick={() => setOpen(!open)} className="relative p-2 rounded-xl hover:bg-white/10 text-gray-400 hover:text-white transition-all">
+      <button type="button" aria-label="Open notifications" onClick={() => setOpen(!open)} className="relative p-2 rounded-xl hover:bg-white/10 text-gray-400 hover:text-white transition-all">
         <Bell className="w-5 h-5" />
         {unreadCount > 0 && (
           <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }}
@@ -68,17 +84,21 @@ export default function NotificationsDropdown() {
               <div className="flex items-center justify-between p-4 border-b border-white/5">
                 <h4 className="text-sm font-bold text-white">Notifications</h4>
                 {unreadCount > 0 && (
-                  <button onClick={markAllRead} className="flex items-center gap-1 text-[10px] text-purple-400 hover:text-purple-300">
+                  <button type="button" onClick={markAllRead} className="flex items-center gap-1 text-[10px] text-purple-400 hover:text-purple-300">
                     <CheckCheck className="w-3 h-3" /> Mark all read
                   </button>
                 )}
               </div>
               <div className="overflow-y-auto max-h-72">
-                {notifications.length === 0 ? (
+                {loading ? (
+                  <p className="text-center text-gray-600 text-xs py-8">Loading notifications...</p>
+                ) : error ? (
+                  <div className="px-4 py-8 text-center text-xs text-gray-500"><p>{error}</p><button type="button" className="mt-3 text-purple-400 hover:text-purple-300" onClick={() => { void fetchNotifications(); }}>Try again</button></div>
+                ) : notifications.length === 0 ? (
                   <p className="text-center text-gray-600 text-xs py-8">No notifications</p>
                 ) : (
                   notifications.map(n => (
-                    <button key={n.id} onClick={() => !n.read && markRead(n.id)}
+                    <button type="button" key={n.id} onClick={() => !n.read && markRead(n.id)}
                       className={`w-full text-left p-4 border-b border-white/[0.03] hover:bg-white/5 transition-all ${!n.read ? 'bg-purple-500/5' : ''}`}>
                       <div className="flex gap-3">
                         {!n.read && <div className="w-2 h-2 rounded-full bg-purple-500 mt-1.5 flex-shrink-0" />}

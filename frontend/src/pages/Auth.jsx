@@ -3,7 +3,9 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, LayoutDashboard, LogOut } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { apiOrThrow } from '../lib/api';
+import BrandMark from '../components/BrandMark';
 import LegalFooter from '../components/LegalFooter';
+import ThemeToggle from '../components/ThemeToggle';
 
 export default function AuthPage({ session: propSession }) {
   const navigate = useNavigate();
@@ -18,6 +20,8 @@ export default function AuthPage({ session: propSession }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
+  const [mfaChallenge, setMfaChallenge] = useState(null);
+  const [mfaCode, setMfaCode] = useState('');
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -26,14 +30,7 @@ export default function AuthPage({ session: propSession }) {
   useEffect(() => {
     if (!session) return;
     const inviteCode = new URLSearchParams(location.search).get('join');
-    if (!inviteCode) {
-      navigate('/dashboard', { replace: true });
-      return;
-    }
-
-    apiOrThrow('/api/teams/join', 'POST', { code: inviteCode })
-      .then(() => navigate('/dashboard', { replace: true }))
-      .catch((requestError) => setError(requestError.message));
+    navigate(inviteCode ? `/join/${encodeURIComponent(inviteCode)}` : '/dashboard', { replace: true });
   }, [location.search, navigate, session]);
 
   const resetMessages = () => {
@@ -45,6 +42,53 @@ export default function AuthPage({ session: propSession }) {
     setIsLogin(nextLogin);
     setIsForgotPassword(nextForgotPassword);
     resetMessages();
+  };
+
+  const getPostAuthPath = () => {
+    const inviteCode = new URLSearchParams(location.search).get('join');
+    return inviteCode ? `/join/${encodeURIComponent(inviteCode)}` : '/dashboard';
+  };
+
+  const startMfaChallenge = async () => {
+    const { data: assurance, error: assuranceError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (assuranceError) throw assuranceError;
+    if (assurance?.nextLevel !== 'aal2' || assurance.currentLevel === 'aal2') return false;
+
+    const { data: factors, error: factorsError } = await supabase.auth.mfa.listFactors();
+    if (factorsError) throw factorsError;
+    const factor = factors?.totp?.find((item) => item.status === 'verified');
+    if (!factor) return false;
+
+    const { data: challenge, error: challengeError } = await supabase.auth.mfa.challenge({ factorId: factor.id });
+    if (challengeError) throw challengeError;
+    setMfaChallenge({ factorId: factor.id, challengeId: challenge.id });
+    return true;
+  };
+
+  const verifyMfa = async (event) => {
+    event.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      const { error: verifyError } = await supabase.auth.mfa.verify({
+        factorId: mfaChallenge.factorId,
+        challengeId: mfaChallenge.challengeId,
+        code: mfaCode.trim(),
+      });
+      if (verifyError) throw verifyError;
+      navigate(getPostAuthPath(), { replace: true });
+    } catch (requestError) {
+      setError(requestError.message || 'That verification code was not accepted.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const cancelMfa = async () => {
+    await supabase.auth.signOut();
+    setMfaChallenge(null);
+    setMfaCode('');
+    setError(null);
   };
 
   const handleSubmit = async (event) => {
@@ -67,7 +111,7 @@ export default function AuthPage({ session: propSession }) {
       if (isLogin) {
         const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
         if (signInError) throw signInError;
-        navigate('/dashboard', { replace: true });
+        if (!(await startMfaChallenge())) navigate(getPostAuthPath(), { replace: true });
         return;
       }
 
@@ -88,7 +132,7 @@ export default function AuthPage({ session: propSession }) {
 
       const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
       if (signInError) throw signInError;
-      navigate('/dashboard', { replace: true });
+      if (!(await startMfaChallenge())) navigate(getPostAuthPath(), { replace: true });
     } catch (requestError) {
       setError(requestError.message || 'Something went wrong. Please try again.');
     } finally {
@@ -103,19 +147,29 @@ export default function AuthPage({ session: propSession }) {
     setLoading(false);
   };
 
-  const formTitle = isForgotPassword ? 'Reset your password' : isLogin ? 'Sign in to SyncBoard' : 'Create your workspace account';
-  const formDescription = isForgotPassword ? 'We will email a reset link if an account exists for this address.' : 'Use one account to access the workspaces you are invited to.';
+  const formTitle = mfaChallenge ? 'Verify your sign-in' : isForgotPassword ? 'Reset your password' : isLogin ? 'Sign in to SyncBoard' : 'Create your workspace account';
+  const formDescription = mfaChallenge ? 'Enter the six-digit code from your authenticator app to continue.' : isForgotPassword ? 'We will email a reset link if an account exists for this address.' : isLogin ? 'Sign in to view your team tasks and shared project work.' : 'Create an account for your college project workspace.';
 
   return (
     <div className="auth-page">
-      <header className="auth-header"><Link className="marketing-brand" to="/">SyncBoard</Link></header>
+      <header className="auth-header">
+        <Link className="marketing-brand" to="/"><BrandMark /><span>SyncBoard</span></Link>
+        <ThemeToggle />
+      </header>
       <main className="auth-main">
         <section className="auth-card" aria-labelledby="auth-title">
           <p className="marketing-eyebrow">College project workspace</p>
           <h1 id="auth-title">{formTitle}</h1>
           <p className="auth-intro">{formDescription}</p>
 
-          {session ? (
+          {mfaChallenge ? (
+            <form className="auth-form" onSubmit={verifyMfa}>
+              <label htmlFor="mfa-code">Authenticator code<input id="mfa-code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, '').slice(0, 6))} required /></label>
+              {error ? <p className="form-message form-message--error" role="alert">{error}</p> : null}
+              <button className="auth-primary-button" type="submit" disabled={loading || mfaCode.length !== 6}>{loading ? 'Checking code...' : 'Verify and continue'} <ArrowRight aria-hidden="true" size={18} /></button>
+              <button className="auth-text-button" type="button" onClick={cancelMfa}>Use another sign-in method</button>
+            </form>
+          ) : session ? (
             <div className="auth-signed-in">
               <p>You are signed in as <strong>{session.user.email}</strong>.</p>
               {error ? <p className="form-message form-message--error" role="alert">{error}</p> : null}

@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { ArrowRight, CheckCircle2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import BrandMark from '../components/BrandMark';
 import LegalFooter from '../components/LegalFooter';
+import ThemeToggle from '../components/ThemeToggle';
 
 export default function ResetPasswordPage() {
   const navigate = useNavigate();
@@ -35,7 +37,10 @@ export default function ResetPasswordPage() {
 
   return (
     <div className="auth-page">
-      <header className="auth-header"><Link className="marketing-brand" to="/">SyncBoard</Link></header>
+      <header className="auth-header">
+        <Link className="marketing-brand" to="/"><BrandMark /><span>SyncBoard</span></Link>
+        <ThemeToggle />
+      </header>
       <main className="auth-main">
         <section className="auth-card" aria-labelledby="reset-title">
           <p className="marketing-eyebrow">Account security</p>

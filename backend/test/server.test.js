@@ -50,8 +50,27 @@ test('protected workspace routes reject unauthenticated requests', async () => {
   }
 });
 
+test('owner controls reject unauthenticated requests', async () => {
+  const requests = [
+    ['/api/teams/test-team/join-requests', 'GET'],
+    ['/api/teams/test-team/join-requests/test-request/approve', 'POST'],
+    ['/api/teams/test-team/members/test-user', 'DELETE'],
+    ['/api/teams/test-team', 'DELETE']
+  ];
+  for (const [path, method] of requests) {
+    const response = await request(path, { method });
+    assert.equal(response.status, 401, `${method} ${path} should require authentication`);
+  }
+});
+
 test('unknown API routes return a JSON 404', async () => {
   const response = await request('/api/does-not-exist');
   assert.equal(response.status, 404);
   assert.equal(response.body.error, 'Not found');
+});
+
+test('malformed public invite codes fail without a database lookup', async () => {
+  const response = await request('/api/invites/not-a-valid-code');
+  assert.equal(response.status, 404);
+  assert.equal(response.body.error, 'Invite not found');
 });

@@ -20,8 +20,8 @@ export default function JoinTeamModal({ isOpen, onClose, onJoined }) {
       onJoined(team);
       onClose();
       showToast({
-        title: 'Joined team',
-        message: `You are now in ${team.name}.`,
+        title: team.status === 'pending' ? 'Request sent for approval' : 'Joined team',
+        message: team.status === 'pending' ? `${team.name}'s leader must approve your request.` : `You are now in ${team.name}.`,
         variant: 'success',
       });
     } catch (error) {

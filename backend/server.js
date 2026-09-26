@@ -14,6 +14,7 @@ const multer = require('multer');
 const helmet = require('helmet');
 const expressRateLimit = require('express-rate-limit');
 const { createClient } = require('@supabase/supabase-js');
+const { isEmailConfigured, sendEmail } = require('./email');
 
 // ─── Supabase Client ─────────────────────────────────────────────────────────
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -24,8 +25,8 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('SUPABASE_URL and SUPABASE_ANON_KEY are required.');
 }
 
-if (process.env.NODE_ENV === 'production' && !supabaseServiceRoleKey) {
-  throw new Error('SUPABASE_SERVICE_ROLE_KEY is required in production.');
+if (process.env.NODE_ENV !== 'test' && !supabaseServiceRoleKey) {
+  throw new Error('SUPABASE_SERVICE_ROLE_KEY is required for backend database access. Keep it server-only and add it to backend/.env.');
 }
 
 const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey);
@@ -52,6 +53,7 @@ app.set('trust proxy', 1);
 app.use(helmet());
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
+app.use('/api', rateLimit(15 * 60 * 1000, 300));
 
 app.get('/healthz', (req, res) => {
   res.json({ status: 'ok', service: 'syncboard-api', timestamp: new Date().toISOString() });
@@ -112,6 +114,25 @@ function sanitize(str) {
   return str.replace(/[<>]/g, '').trim();
 }
 
+const DEFAULT_NOTIFICATION_PREFERENCES = Object.freeze({
+  assignments: true,
+  deadlines: true,
+  mentions: true,
+  activity: false,
+  emailEnabled: true
+});
+
+const INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+function generateInviteCode() {
+  return Array.from({ length: 12 }, () => INVITE_ALPHABET[crypto.randomInt(0, INVITE_ALPHABET.length)]).join('');
+}
+
+function normalizeInviteCode(value) {
+  const code = sanitize(value || '').toUpperCase();
+  return /^[A-Z0-9]{8,16}$/.test(code) ? code : null;
+}
+
 function isPrivateAddress(address) {
   if (net.isIP(address) === 4) {
     const octets = address.split('.').map(Number);
@@ -160,7 +181,14 @@ function rateLimit(windowMs = 60000, maxAttempts = 10) {
     limit: maxAttempts,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
-    message: { error: 'Too many requests. Please try again later.' }
+    handler: (req, res) => {
+      const retryAfter = Math.ceil((res.getHeader('Retry-After') || windowMs / 1000));
+      res.status(429).json({
+        code: 'RATE_LIMITED',
+        error: 'Too many requests. Please try again later.',
+        retryAfter
+      });
+    }
   });
 }
 
@@ -240,6 +268,34 @@ async function requireTeamMember(req, res, teamId) {
   }
 
   return true;
+}
+
+async function requireTeamOwner(req, res, teamId) {
+  if (!teamId) {
+    res.status(400).json({ code: 'MISSING_TEAM_ID', error: 'Team is required.' });
+    return null;
+  }
+
+  const { data: team, error } = await supabase
+    .from('teams')
+    .select('*')
+    .eq('id', teamId)
+    .maybeSingle();
+
+  if (error) {
+    res.status(500).json({ code: 'TEAM_LOOKUP_FAILED', error: 'Unable to load the team.' });
+    return null;
+  }
+  if (!team) {
+    res.status(404).json({ code: 'TEAM_NOT_FOUND', error: 'Team not found.' });
+    return null;
+  }
+  if (team.owner_id !== req.user.id) {
+    res.status(403).json({ code: 'TEAM_OWNER_REQUIRED', error: 'Only the team leader can perform this action.' });
+    return null;
+  }
+
+  return team;
 }
 
 async function getSharedTeamIds(requesterId, targetUserId) {
@@ -548,6 +604,43 @@ app.patch('/api/profile', auth, async (req, res) => {
   });
 });
 
+app.get('/api/preferences/notifications', auth, async (req, res) => {
+  const { data: profile, error } = await supabase
+    .from('profiles')
+    .select('notification_preferences')
+    .eq('id', req.user.id)
+    .single();
+
+  if (error || !profile) return res.status(404).json({ error: 'Notification preferences not found' });
+  res.json({ preferences: { ...DEFAULT_NOTIFICATION_PREFERENCES, ...(profile.notification_preferences || {}) } });
+});
+
+app.patch('/api/preferences/notifications', auth, async (req, res) => {
+  const incoming = req.body.preferences;
+  if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+    return res.status(400).json({ error: 'Notification preferences are required' });
+  }
+
+  const { data: currentProfile, error: profileError } = await supabase
+    .from('profiles')
+    .select('notification_preferences')
+    .eq('id', req.user.id)
+    .single();
+  if (profileError || !currentProfile) return res.status(404).json({ error: 'Notification preferences not found' });
+
+  const current = { ...DEFAULT_NOTIFICATION_PREFERENCES, ...(currentProfile.notification_preferences || {}) };
+  const preferences = Object.fromEntries(
+    Object.keys(DEFAULT_NOTIFICATION_PREFERENCES).map((key) => [key, incoming[key] === undefined ? current[key] : incoming[key] === true])
+  );
+  const { error } = await supabase
+    .from('profiles')
+    .update({ notification_preferences: preferences })
+    .eq('id', req.user.id);
+
+  if (error) return res.status(500).json({ error: 'Unable to save notification preferences' });
+  res.json({ preferences });
+});
+
 function buildLocalAiReply(teamName, tasks) {
   const activeTasks = tasks.filter((task) => task.status !== 'done');
   const overdueTasks = activeTasks.filter((task) => {
@@ -659,12 +752,29 @@ app.post('/api/auth/reset-password', rateLimit(60000, 5), async (req, res) => {
 });
 
 // ─── Quick Join via Invite Link ──────────────────────────────────────────────
-app.get('/join/:code', async (req, res) => {
-  const code = req.params.code.toUpperCase();
+app.get('/api/invites/:code', rateLimit(60000, 30), async (req, res) => {
+  const code = normalizeInviteCode(req.params.code);
+  if (!code) return res.status(404).json({ error: 'Invite not found' });
+
+  const { data: team } = await supabase
+    .from('teams')
+    .select('id, name')
+    .eq('invite_code', code)
+    .eq('invite_enabled', true)
+    .maybeSingle();
+
+  if (!team) return res.status(404).json({ error: 'Invite not found' });
+  res.json({ id: team.id, name: team.name });
+});
+
+app.get('/join/:code', rateLimit(60000, 30), async (req, res) => {
+  const code = normalizeInviteCode(req.params.code);
+  if (!code) return res.redirect('/login?error=invalid_invite');
   const { data: team } = await supabase
     .from('teams')
     .select('id')
     .eq('invite_code', code)
+    .eq('invite_enabled', true)
     .single();
 
   if (!team) return res.redirect('/login?error=invalid_invite');
@@ -691,30 +801,33 @@ app.get('/api/teams', auth, async (req, res) => {
 
   if (!teams) return res.json([]);
 
-  // Get members for each team
-  const result = await Promise.all(teams.map(async (team) => {
-    const { data: members } = await supabase
-      .from('team_members')
-      .select('user_id')
-      .eq('team_id', team.id);
+  const { data: members } = await supabase
+    .from('team_members')
+    .select('team_id, user_id')
+    .in('team_id', teamIds);
+  const memberIds = [...new Set((members || []).map((member) => member.user_id))];
+  const { data: profiles } = memberIds.length
+    ? await supabase.from('profiles').select('id, name, avatar').in('id', memberIds)
+    : { data: [] };
+  const profilesById = new Map((profiles || []).map((profile) => [profile.id, profile]));
+  const membersByTeam = new Map();
+  (members || []).forEach((member) => {
+    const teamMembers = membersByTeam.get(member.team_id) || [];
+    const profile = profilesById.get(member.user_id);
+    if (profile) teamMembers.push(profile);
+    membersByTeam.set(member.team_id, teamMembers);
+  });
 
-    const memberIds = (members || []).map(m => m.user_id);
-
-    const { data: profiles } = await supabase
-      .from('profiles')
-      .select('id, name, avatar')
-      .in('id', memberIds);
-
-    return {
-      id: team.id,
-      name: team.name,
-      description: team.description,
-      inviteCode: team.invite_code,
-      ownerId: team.owner_id,
-      githubRepo: team.github_repo || null,
-      members: profiles || [],
-      createdAt: team.created_at
-    };
+  const result = teams.map((team) => ({
+    id: team.id,
+    name: team.name,
+    description: team.description,
+    inviteCode: team.invite_code,
+    inviteEnabled: team.invite_enabled !== false,
+    ownerId: team.owner_id,
+    githubRepo: team.github_repo || null,
+    members: membersByTeam.get(team.id) || [],
+    createdAt: team.created_at
   }));
 
   res.json(result);
@@ -724,7 +837,7 @@ app.post('/api/teams', auth, async (req, res) => {
   const { name, description } = req.body;
   const cleanName = sanitize(name);
   if (!cleanName) return res.status(400).json({ error: 'Team name is required' });
-  const inviteCode = crypto.randomBytes(5).toString('hex').substring(0, 8).toUpperCase();
+  const inviteCode = generateInviteCode();
 
   const { data: team, error } = await supabase
     .from('teams')
@@ -740,15 +853,20 @@ app.post('/api/teams', auth, async (req, res) => {
   if (error) return res.status(500).json({ error: 'Failed to create team' });
 
   // Add creator as member
-  await supabase
+  const { error: memberError } = await supabase
     .from('team_members')
     .insert({ team_id: team.id, user_id: req.user.id });
+  if (memberError) {
+    await supabase.from('teams').delete().eq('id', team.id);
+    return res.status(500).json({ error: 'Failed to finish creating the team.' });
+  }
 
   const result = {
     id: team.id,
     name: team.name,
     description: team.description,
     inviteCode: team.invite_code,
+    inviteEnabled: team.invite_enabled !== false,
     ownerId: team.owner_id,
     members: [{ id: req.user.id, name: req.user.name, avatar: req.user.avatar }],
     createdAt: team.created_at
@@ -758,33 +876,240 @@ app.post('/api/teams', auth, async (req, res) => {
   res.json(result);
 });
 
-app.post('/api/teams/join', auth, async (req, res) => {
-  const { code } = req.body;
-  const inviteCode = sanitize(code).toUpperCase();
+app.post('/api/teams/join', auth, rateLimit(60000, 20), async (req, res) => {
+  const inviteCode = normalizeInviteCode(req.body.code);
   if (!inviteCode) return res.status(400).json({ error: 'Invite code is required' });
   const { data: team } = await supabase
     .from('teams')
     .select('*')
     .eq('invite_code', inviteCode)
+    .eq('invite_enabled', true)
     .single();
 
   if (!team) return res.status(404).json({ error: 'Invalid invite code' });
 
-  // Add member (upsert to avoid duplicates)
-  await supabase
+  const { data: existingMembership } = await supabase
     .from('team_members')
-    .upsert({ team_id: team.id, user_id: req.user.id }, { onConflict: 'team_id,user_id' });
+    .select('user_id')
+    .eq('team_id', team.id)
+    .eq('user_id', req.user.id)
+    .maybeSingle();
 
   const result = {
     id: team.id,
     name: team.name,
     description: team.description,
     inviteCode: team.invite_code,
+    inviteEnabled: team.invite_enabled !== false,
     ownerId: team.owner_id,
     createdAt: team.created_at
   };
 
-  io.to(team.id).emit('team:updated', result);
+  if (existingMembership) {
+    return res.json({ ...result, status: 'approved' });
+  }
+
+  const { data: existingRequest } = await supabase
+    .from('team_join_requests')
+    .select('id, status')
+    .eq('team_id', team.id)
+    .eq('user_id', req.user.id)
+    .eq('status', 'pending')
+    .maybeSingle();
+
+  if (existingRequest) return res.status(202).json({ ...result, status: 'pending', requestId: existingRequest.id });
+
+  const { data: request, error: requestError } = await supabase
+    .from('team_join_requests')
+    .insert({ team_id: team.id, user_id: req.user.id })
+    .select('id, status, requested_at')
+    .single();
+
+  if (requestError || !request) {
+    return res.status(500).json({ error: 'Unable to submit the join request. Please try again.' });
+  }
+
+  if (team.owner_id && team.owner_id !== req.user.id) {
+    await createNotification(team.owner_id, 'team_join_requested', `${req.user.name} requested to join ${team.name}.`, null, team.id, {
+      eventKey: `team:${team.id}:join-request:${request.id}`
+    });
+  }
+
+  res.status(202).json({ ...result, status: 'pending', requestId: request.id });
+});
+
+app.get('/api/teams/:id/join-requests', auth, rateLimit(60000, 30), async (req, res) => {
+  const team = await requireTeamOwner(req, res, req.params.id);
+  if (!team) return;
+
+  const { data: requests, error } = await supabase
+    .from('team_join_requests')
+    .select('id, user_id, status, requested_at')
+    .eq('team_id', team.id)
+    .eq('status', 'pending')
+    .order('requested_at', { ascending: true });
+  if (error) return res.status(500).json({ error: 'Unable to load join requests.' });
+
+  const userIds = [...new Set((requests || []).map((request) => request.user_id))];
+  const { data: profiles } = userIds.length
+    ? await supabase.from('profiles').select('id, name, email, avatar').in('id', userIds)
+    : { data: [] };
+  const profilesById = new Map((profiles || []).map((profile) => [profile.id, profile]));
+
+  res.json((requests || []).map((request) => ({
+    id: request.id,
+    userId: request.user_id,
+    requestedAt: request.requested_at,
+    user: profilesById.get(request.user_id) || { id: request.user_id, name: 'Unknown user', email: '', avatar: '' }
+  })));
+});
+
+app.post('/api/teams/:id/join-requests/:requestId/approve', auth, rateLimit(60000, 30), async (req, res) => {
+  const team = await requireTeamOwner(req, res, req.params.id);
+  if (!team) return;
+
+  const { data: request } = await supabase
+    .from('team_join_requests')
+    .select('*')
+    .eq('id', req.params.requestId)
+    .eq('team_id', team.id)
+    .eq('status', 'pending')
+    .maybeSingle();
+  if (!request) return res.status(404).json({ error: 'Pending join request not found.' });
+
+  const { error: memberError } = await supabase
+    .from('team_members')
+    .upsert({ team_id: team.id, user_id: request.user_id }, { onConflict: 'team_id,user_id' });
+  if (memberError) return res.status(500).json({ error: 'Unable to approve this join request.' });
+
+  const { error: updateError } = await supabase
+    .from('team_join_requests')
+    .update({ status: 'approved', reviewed_at: new Date().toISOString(), reviewed_by: req.user.id })
+    .eq('id', request.id)
+    .eq('status', 'pending');
+  if (updateError) return res.status(500).json({ error: 'Unable to complete this approval.' });
+
+  await createNotification(request.user_id, 'team_join_approved', `Your request to join ${team.name} was approved.`, null, team.id, {
+    eventKey: `team:${team.id}:join-approved:${request.id}`
+  });
+  io.to(team.id).emit('team:updated', { id: team.id });
+  res.json({ id: request.id, status: 'approved', teamId: team.id, userId: request.user_id });
+});
+
+app.post('/api/teams/:id/join-requests/:requestId/reject', auth, rateLimit(60000, 30), async (req, res) => {
+  const team = await requireTeamOwner(req, res, req.params.id);
+  if (!team) return;
+
+  const { data: request } = await supabase
+    .from('team_join_requests')
+    .select('*')
+    .eq('id', req.params.requestId)
+    .eq('team_id', team.id)
+    .eq('status', 'pending')
+    .maybeSingle();
+  if (!request) return res.status(404).json({ error: 'Pending join request not found.' });
+
+  const { error } = await supabase
+    .from('team_join_requests')
+    .update({ status: 'rejected', reviewed_at: new Date().toISOString(), reviewed_by: req.user.id })
+    .eq('id', request.id)
+    .eq('status', 'pending');
+  if (error) return res.status(500).json({ error: 'Unable to reject this join request.' });
+
+  await createNotification(request.user_id, 'team_join_rejected', `Your request to join ${team.name} was declined.`, null, team.id, {
+    eventKey: `team:${team.id}:join-rejected:${request.id}`
+  });
+  res.json({ id: request.id, status: 'rejected', teamId: team.id, userId: request.user_id });
+});
+
+app.delete('/api/teams/:id/members/:userId', auth, rateLimit(60000, 20), async (req, res) => {
+  const team = await requireTeamOwner(req, res, req.params.id);
+  if (!team) return;
+  if (req.params.userId === team.owner_id) return res.status(400).json({ error: 'The team leader cannot be removed.' });
+
+  const { data: membership } = await supabase
+    .from('team_members')
+    .select('user_id')
+    .eq('team_id', team.id)
+    .eq('user_id', req.params.userId)
+    .maybeSingle();
+  if (!membership) return res.status(404).json({ error: 'Team member not found.' });
+
+  const { error } = await supabase
+    .from('team_members')
+    .delete()
+    .eq('team_id', team.id)
+    .eq('user_id', req.params.userId);
+  if (error) return res.status(500).json({ error: 'Unable to remove this team member.' });
+
+  await supabase.from('tasks').update({ assignee_id: null }).eq('team_id', team.id).eq('assignee_id', req.params.userId);
+  await createNotification(req.params.userId, 'team_member_removed', `You were removed from ${team.name}.`, null, team.id);
+  io.to(team.id).emit('team:updated', { id: team.id });
+  res.json({ teamId: team.id, userId: req.params.userId, removed: true });
+});
+
+app.delete('/api/teams/:id', auth, rateLimit(60000, 10), async (req, res) => {
+  const team = await requireTeamOwner(req, res, req.params.id);
+  if (!team) return;
+
+  const { error } = await supabase.from('teams').delete().eq('id', team.id).eq('owner_id', req.user.id);
+  if (error) return res.status(500).json({ error: 'Unable to delete this team.' });
+
+  io.to(team.id).emit('team:deleted', { id: team.id });
+  res.json({ id: team.id, deleted: true });
+});
+
+app.post('/api/teams/:id/invite/regenerate', auth, rateLimit(60000, 10), async (req, res) => {
+  const teamId = req.params.id;
+  const { data: team } = await supabase.from('teams').select('*').eq('id', teamId).maybeSingle();
+  if (!team) return res.status(404).json({ error: 'Team not found' });
+  if (team.owner_id !== req.user.id) return res.status(403).json({ error: 'Only the team owner can manage invites' });
+
+  const { data: updated, error } = await supabase
+    .from('teams')
+    .update({ invite_code: generateInviteCode(), invite_enabled: true, invite_regenerated_at: new Date().toISOString() })
+    .eq('id', teamId)
+    .select('*')
+    .single();
+
+  if (error || !updated) return res.status(500).json({ error: 'Failed to regenerate invite' });
+  const result = {
+    id: updated.id,
+    name: updated.name,
+    description: updated.description,
+    inviteCode: updated.invite_code,
+    inviteEnabled: updated.invite_enabled !== false,
+    ownerId: updated.owner_id,
+    createdAt: updated.created_at
+  };
+  io.to(teamId).emit('team:updated', result);
+  res.json(result);
+});
+
+app.post('/api/teams/:id/invite/revoke', auth, rateLimit(60000, 10), async (req, res) => {
+  const teamId = req.params.id;
+  const { data: team } = await supabase.from('teams').select('id, owner_id').eq('id', teamId).maybeSingle();
+  if (!team) return res.status(404).json({ error: 'Team not found' });
+  if (team.owner_id !== req.user.id) return res.status(403).json({ error: 'Only the team owner can manage invites' });
+
+  const { data: updated, error } = await supabase
+    .from('teams')
+    .update({ invite_enabled: false })
+    .eq('id', teamId)
+    .select('id, name, description, invite_code, invite_enabled, owner_id, created_at')
+    .single();
+
+  if (error || !updated) return res.status(500).json({ error: 'Failed to revoke invite' });
+  const result = {
+    id: updated.id,
+    name: updated.name,
+    description: updated.description,
+    inviteCode: updated.invite_code,
+    inviteEnabled: false,
+    ownerId: updated.owner_id,
+    createdAt: updated.created_at
+  };
+  io.to(teamId).emit('team:updated', result);
   res.json(result);
 });
 
@@ -1005,7 +1330,8 @@ app.post('/api/tasks', auth, async (req, res) => {
       'task_assigned',
       `${req.user.name} assigned you a task: "${title}"`,
       task.id,
-      teamId
+      teamId,
+      { eventKey: `task:${task.id}:assignment:${assigneeId}` }
     );
   }
 
@@ -2006,8 +2332,66 @@ function emitToUser(userId, event, payload) {
   });
 }
 
+const notificationPreferenceKeys = {
+  task_assigned: 'assignments',
+  deadline_reminder: 'deadlines',
+  team_joined: 'activity',
+  team_join_requested: 'activity',
+  team_join_approved: 'activity',
+  team_join_rejected: 'activity',
+  team_member_removed: 'activity',
+  mention: 'mentions'
+};
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+async function queueNotificationEmail({ userId, type, message, eventKey }) {
+  if (!isEmailConfigured()) return;
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('email, notification_preferences')
+    .eq('id', userId)
+    .maybeSingle();
+  if (!profile?.email) return;
+
+  const preferences = { ...DEFAULT_NOTIFICATION_PREFERENCES, ...(profile.notification_preferences || {}) };
+  const preferenceKey = notificationPreferenceKeys[type] || 'activity';
+  if (!preferences.emailEnabled || !preferences[preferenceKey]) return;
+
+  if (eventKey) {
+    const { error: deliveryError } = await supabase
+      .from('notification_deliveries')
+      .insert({ user_id: userId, notification_type: type, event_key: eventKey });
+    if (deliveryError) return;
+  }
+
+  const result = await sendEmail({
+    to: profile.email,
+    subject: `SyncBoard: ${type === 'task_assigned' ? 'new task assignment' : type === 'deadline_reminder' ? 'upcoming deadline' : 'workspace update'}`,
+    text: `${message}\n\nOpen SyncBoard to review this update.`,
+    html: `<p>${escapeHtml(message)}</p><p>Open SyncBoard to review this update.</p>`
+  });
+
+  if (!result.sent && eventKey) {
+    await supabase
+      .from('notification_deliveries')
+      .delete()
+      .eq('user_id', userId)
+      .eq('notification_type', type)
+      .eq('event_key', eventKey);
+  }
+}
+
 // Helper: create notification
-async function createNotification(userId, type, message, taskId, teamId) {
+async function createNotification(userId, type, message, taskId, teamId, options = {}) {
   await supabase
     .from('notifications')
     .insert({
@@ -2019,6 +2403,51 @@ async function createNotification(userId, type, message, taskId, teamId) {
     });
 
   emitToUser(userId, 'notification:new', { userId, type, message });
+  if (options.sendEmail !== false) {
+    void queueNotificationEmail({ userId, type, message, eventKey: options.eventKey });
+  }
+}
+
+async function sendDeadlineReminders() {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const deadline = tomorrow.toISOString().slice(0, 10);
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const { data: tasks } = await supabase
+    .from('tasks')
+    .select('id, title, team_id, assignee_id')
+    .eq('due_date', deadline)
+    .neq('status', 'done')
+    .not('assignee_id', 'is', null);
+
+  for (const task of tasks || []) {
+    const { data: existingReminder } = await supabase
+      .from('notifications')
+      .select('id')
+      .eq('user_id', task.assignee_id)
+      .eq('type', 'deadline_reminder')
+      .eq('task_id', task.id)
+      .gte('created_at', today.toISOString())
+      .limit(1)
+      .maybeSingle();
+    if (existingReminder) continue;
+
+    await createNotification(
+      task.assignee_id,
+      'deadline_reminder',
+      `Your task "${task.title}" is due tomorrow.`,
+      task.id,
+      task.team_id,
+      { sendEmail: false }
+    );
+    void queueNotificationEmail({
+      userId: task.assignee_id,
+      type: 'deadline_reminder',
+      message: `Your task "${task.title}" is due tomorrow.`,
+      eventKey: `${task.id}:${deadline}`
+    });
+  }
 }
 
 // ─── GitHub Integration ──────────────────────────────────────────────────────
@@ -2390,6 +2819,12 @@ const PORT = process.env.PORT || 3000;
 
 if (require.main === module) {
   server.listen(PORT, () => console.log(`\n✅ SyncBoard API running at http://localhost:${PORT}\n\nFront-end: React (Vite) in the frontend directory\n☁️  Storage: Supabase Cloud\n🔗 Connected to Supabase: ${process.env.SUPABASE_URL}\n`));
+}
+
+if (require.main === module) {
+  const reminderInterval = 15 * 60 * 1000;
+  void sendDeadlineReminders();
+  setInterval(() => void sendDeadlineReminders(), reminderInterval).unref();
 }
 
 module.exports = { app, server };

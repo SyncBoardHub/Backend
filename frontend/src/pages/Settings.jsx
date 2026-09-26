@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Bell, Check, KeyRound, Monitor, Moon, Save, ShieldCheck, Sun, UserRound } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -18,6 +18,7 @@ const defaultNotifications = {
   deadlines: true,
   mentions: true,
   activity: false,
+  emailEnabled: true,
 };
 
 function initials(name) {
@@ -48,20 +49,22 @@ export default function SettingsPage({ session }) {
     joinedAt: null,
   });
   const [notifications, setNotifications] = useState(() => {
-    try {
-      return { ...defaultNotifications, ...JSON.parse(localStorage.getItem('syncboard-notifications') || '{}') };
-    } catch {
-      return defaultNotifications;
-    }
+    return defaultNotifications;
   });
+  const [mfaFactors, setMfaFactors] = useState([]);
+  const [mfaEnrollment, setMfaEnrollment] = useState(null);
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaLoading, setMfaLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     let active = true;
-    apiOrThrow('/api/profile')
-      .then((data) => {
-        if (active && data) setProfile(data);
+    Promise.all([apiOrThrow('/api/profile'), apiOrThrow('/api/preferences/notifications')])
+      .then(([profileData, preferenceData]) => {
+        if (!active) return;
+        if (profileData) setProfile(profileData);
+        if (preferenceData?.preferences) setNotifications({ ...defaultNotifications, ...preferenceData.preferences });
       })
       .catch(() => {
         if (active) showToast({ title: 'Profile unavailable', message: 'You can still update appearance preferences locally.', variant: 'error' });
@@ -74,14 +77,30 @@ export default function SettingsPage({ session }) {
     };
   }, [showToast]);
 
+  const loadMfaFactors = useCallback(async () => {
+    const { data, error } = await supabase.auth.mfa.listFactors();
+    if (error) throw error;
+    setMfaFactors(data?.totp || []);
+  }, []);
+
+  useEffect(() => {
+    loadMfaFactors().catch(() => {
+      showToast({ title: 'MFA status unavailable', message: 'Try again after refreshing the page.', variant: 'error' });
+    });
+  }, [loadMfaFactors, showToast]);
+
   const displayInitials = useMemo(() => initials(profile.name || 'SyncBoard'), [profile.name]);
 
-  const updateNotification = (key) => {
-    setNotifications((current) => {
-      const next = { ...current, [key]: !current[key] };
-      localStorage.setItem('syncboard-notifications', JSON.stringify(next));
-      return next;
-    });
+  const updateNotification = async (key) => {
+    const previous = notifications;
+    const next = { ...previous, [key]: !previous[key] };
+    setNotifications(next);
+    try {
+      await apiOrThrow('/api/preferences/notifications', 'PATCH', { preferences: next });
+    } catch (error) {
+      setNotifications(previous);
+      showToast({ title: 'Could not save notification preference', message: error.message, variant: 'error' });
+    }
   };
 
   const saveProfile = async (event) => {
@@ -107,6 +126,54 @@ export default function SettingsPage({ session }) {
       return;
     }
     showToast({ title: 'Reset email sent', message: 'Check your inbox for the secure password reset link.', variant: 'success' });
+  };
+
+  const enrollMfa = async () => {
+    setMfaLoading(true);
+    try {
+      const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'SyncBoard authenticator' });
+      if (error) throw error;
+      setMfaEnrollment(data);
+      setMfaCode('');
+    } catch (error) {
+      showToast({ title: 'Could not start MFA setup', message: error.message, variant: 'error' });
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
+  const verifyMfaEnrollment = async (event) => {
+    event.preventDefault();
+    setMfaLoading(true);
+    try {
+      const { data: challenge, error: challengeError } = await supabase.auth.mfa.challenge({ factorId: mfaEnrollment.id });
+      if (challengeError) throw challengeError;
+      const { error: verifyError } = await supabase.auth.mfa.verify({ factorId: mfaEnrollment.id, challengeId: challenge.id, code: mfaCode });
+      if (verifyError) throw verifyError;
+      await loadMfaFactors();
+      setMfaEnrollment(null);
+      setMfaCode('');
+      showToast({ title: 'MFA enabled', message: 'Your authenticator app is now required after password sign-in.', variant: 'success' });
+    } catch (error) {
+      showToast({ title: 'Could not verify MFA', message: error.message, variant: 'error' });
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
+  const disableMfa = async (factorId) => {
+    if (!window.confirm('Disable authenticator verification for this account?')) return;
+    setMfaLoading(true);
+    try {
+      const { error } = await supabase.auth.mfa.unenroll({ factorId });
+      if (error) throw error;
+      await loadMfaFactors();
+      showToast({ title: 'MFA disabled', message: 'Password sign-in will no longer ask for an authenticator code.', variant: 'success' });
+    } catch (error) {
+      showToast({ title: 'Could not disable MFA', message: error.message, variant: 'error' });
+    } finally {
+      setMfaLoading(false);
+    }
   };
 
   return (
@@ -225,6 +292,7 @@ export default function SettingsPage({ session }) {
                   ['deadlines', 'Deadline reminders', 'Get a nudge before work is due.'],
                   ['mentions', 'Mentions', 'See when a teammate calls you out.'],
                   ['activity', 'Team activity', 'Follow project changes as they happen.'],
+                  ['emailEnabled', 'Email notifications', 'Receive selected updates by email when delivery is configured.'],
                 ].map(([key, label, description]) => (
                   <SettingRow key={key} label={label} description={description}>
                     <button type="button" className={notifications[key] ? 'settings-switch settings-switch--on' : 'settings-switch'} onClick={() => updateNotification(key)} aria-pressed={notifications[key]}>
@@ -233,7 +301,7 @@ export default function SettingsPage({ session }) {
                   </SettingRow>
                 ))}
               </div>
-              <div className="settings-note">Notification delivery will become configurable per team as email and push delivery are added.</div>
+              <div className="settings-note">In-app notifications remain available. Email delivery is optional and only active when the beta environment is configured.</div>
             </section>
           ) : null}
 
@@ -253,10 +321,27 @@ export default function SettingsPage({ session }) {
                 <SettingRow label="Password" description="Send yourself a secure password reset link.">
                   <button type="button" className="settings-secondary-button" onClick={requestPasswordReset}><KeyRound /> Reset password</button>
                 </SettingRow>
+                <SettingRow label="Authenticator app" description="Add optional TOTP verification after your password. Store your authenticator backup safely.">
+                  {mfaFactors.filter((factor) => factor.status === 'verified').length > 0 ? (
+                    <button type="button" className="settings-secondary-button" disabled={mfaLoading} onClick={() => disableMfa(mfaFactors.find((factor) => factor.status === 'verified').id)}>Disable MFA</button>
+                  ) : (
+                    <button type="button" className="settings-secondary-button" disabled={mfaLoading} onClick={enrollMfa}>{mfaLoading ? 'Starting...' : 'Enable MFA'}</button>
+                  )}
+                </SettingRow>
                 <SettingRow label="Account created" description="The date this SyncBoard account was created.">
                   <span className="settings-value">{profile.joinedAt ? new Date(profile.joinedAt).toLocaleDateString() : 'Available after profile load'}</span>
                 </SettingRow>
               </div>
+              {mfaEnrollment ? (
+                <form className="mfa-enrollment" onSubmit={verifyMfaEnrollment}>
+                  <h3>Finish authenticator setup</h3>
+                  <p>Scan this QR code with your authenticator app, then enter the six-digit code it generates. Save the setup secret in a secure password manager before closing this screen. This beta does not provide SMS fallback.</p>
+                  {mfaEnrollment.totp?.qr_code ? <img src={mfaEnrollment.totp.qr_code} alt="Authenticator setup QR code" /> : null}
+                  {mfaEnrollment.totp?.secret ? <code>{mfaEnrollment.totp.secret}</code> : null}
+                  <label htmlFor="settings-mfa-code">Verification code<input id="settings-mfa-code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, '').slice(0, 6))} required /></label>
+                  <button type="submit" className="settings-primary-button" disabled={mfaLoading || mfaCode.length !== 6}>{mfaLoading ? 'Verifying...' : 'Verify and enable'}</button>
+                </form>
+              ) : null}
               <div className="settings-note settings-note--warning">Never share your password or recovery link. SyncBoard will not ask for either in a team message.</div>
             </section>
           ) : null}

@@ -1,14 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Copy, Crown, Plus, Users } from 'lucide-react';
+import { Copy, Crown, Plus, Share2, Users } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useToast } from '../../hooks/useToast';
 import CreateTeamModal from './CreateTeamModal';
+import InviteSharePanel from './InviteSharePanel';
 import JoinTeamModal from './JoinTeamModal';
+import TeamManagementPanel from './TeamManagementPanel';
 
 export default function TeamPanel({ currentTeam, onTeamChange, session }) {
   const [teams, setTeams] = useState([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
+  const [showSharePanel, setShowSharePanel] = useState(false);
+  const [showManagement, setShowManagement] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const { showToast } = useToast();
   const currentTeamId = currentTeam?.id;
@@ -22,16 +26,22 @@ export default function TeamPanel({ currentTeam, onTeamChange, session }) {
     setIsLoading(true);
     try {
       const data = await api('/api/teams');
+      if (data === null) {
+        showToast({ title: 'Workspace service unavailable', message: 'Start the SyncBoard backend and try again.', variant: 'error' });
+        return [];
+      }
       if (data && Array.isArray(data)) {
         setTeams(data);
         if (!currentTeamId && data.length > 0) {
           onTeamChange(data[0]);
         }
+        return data;
       }
+      return [];
     } finally {
       setIsLoading(false);
     }
-  }, [currentTeamId, onTeamChange]);
+  }, [currentTeamId, onTeamChange, showToast]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -43,12 +53,16 @@ export default function TeamPanel({ currentTeam, onTeamChange, session }) {
 
   const handleCopyInvite = async () => {
     if (!currentTeam?.inviteCode) return;
-    await navigator.clipboard.writeText(currentTeam.inviteCode);
-    showToast({
-      title: 'Invite code copied',
-      message: `${currentTeam.inviteCode} is ready to share.`,
-      variant: 'success',
-    });
+    try {
+      await navigator.clipboard.writeText(currentTeam.inviteCode);
+      showToast({
+        title: 'Invite code copied',
+        message: `${currentTeam.inviteCode} is ready to share.`,
+        variant: 'success',
+      });
+    } catch {
+      showToast({ title: 'Could not copy invite code', message: 'Select the code and copy it manually.', variant: 'error' });
+    }
   };
 
   const handleCreated = (team) => {
@@ -57,8 +71,26 @@ export default function TeamPanel({ currentTeam, onTeamChange, session }) {
   };
 
   const handleJoined = async (team) => {
+    if (team?.status === 'pending') return;
     await fetchTeams();
     onTeamChange(team);
+  };
+
+  const handleTeamUpdated = (team) => {
+    setTeams((previous) => previous.map((item) => (item.id === team.id ? { ...item, ...team } : item)));
+    onTeamChange(team);
+  };
+
+  const refreshCurrentTeam = async () => {
+    const data = await fetchTeams();
+    const updated = data.find((team) => team.id === currentTeam?.id);
+    if (updated) onTeamChange(updated);
+  };
+
+  const handleDeleted = (teamId) => {
+    setTeams((previous) => previous.filter((team) => team.id !== teamId));
+    setShowManagement(false);
+    if (currentTeam?.id === teamId) onTeamChange(null);
   };
 
   return (
@@ -94,17 +126,45 @@ export default function TeamPanel({ currentTeam, onTeamChange, session }) {
         </div>
 
         {currentTeam ? (
-          <button
-            type="button"
-            onClick={handleCopyInvite}
-            className="mb-4 flex w-full cursor-pointer items-center justify-between rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3 text-left transition hover:bg-white/[0.06]"
-          >
-            <div>
-              <p className="text-[10px] uppercase tracking-[0.22em] text-gray-500">Invite Code</p>
-              <p className="mt-1 font-mono text-sm text-white">{currentTeam.inviteCode}</p>
-            </div>
-            <Copy className="h-4 w-4 text-purple-300" />
-          </button>
+          <div className="mb-4 space-y-2">
+            <button
+              type="button"
+              onClick={handleCopyInvite}
+              className="flex w-full cursor-pointer items-center justify-between rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3 text-left transition hover:bg-white/[0.06]"
+            >
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.22em] text-gray-500">Invite code</p>
+                <p className="mt-1 font-mono text-sm text-white">{currentTeam.inviteCode}</p>
+              </div>
+              <Copy className="h-4 w-4 text-purple-300" />
+            </button>
+            <button type="button" className="team-invite-share-button" onClick={() => setShowSharePanel((visible) => !visible)}>
+              <Share2 size={15} />
+              {showSharePanel ? 'Hide sharing options' : 'Share invite link'}
+            </button>
+            {showSharePanel ? (
+              <InviteSharePanel
+                team={currentTeam}
+                onTeamChange={handleTeamUpdated}
+                onClose={() => setShowSharePanel(false)}
+                canManage={currentTeam.ownerId === session?.user?.id}
+              />
+            ) : null}
+            {currentTeam.ownerId === session?.user?.id ? (
+              <button type="button" className="team-invite-share-button" onClick={() => setShowManagement((visible) => !visible)}>
+                <Users size={15} />
+                {showManagement ? 'Hide team management' : 'Manage members and approvals'}
+              </button>
+            ) : null}
+            {showManagement && currentTeam.ownerId === session?.user?.id ? (
+              <TeamManagementPanel
+                team={currentTeam}
+                onChanged={refreshCurrentTeam}
+                onDeleted={handleDeleted}
+                onClose={() => setShowManagement(false)}
+              />
+            ) : null}
+          </div>
         ) : null}
 
         <div className="space-y-3">

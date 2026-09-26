@@ -7,6 +7,7 @@ import socket from '../lib/socket';
 
 import NotificationsDropdown from '../components/NotificationsDropdown';
 import ProfileMenu from '../components/ProfileMenu';
+import BrandMark from '../components/BrandMark';
 import SearchBar from '../components/SearchBar';
 import UserProfile from '../components/UserProfile';
 import { api, apiOrThrow } from '../lib/api';
@@ -266,7 +267,7 @@ export default function DashboardPage({ session }) {
                 className="brand-mark"
                 title="Go to Today"
               >
-                S
+                <BrandMark />
               </button>
               <button type="button" onClick={() => setActiveTab('overview')} className="hidden lg:block">
                 <h2 className="text-xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
@@ -296,7 +297,7 @@ export default function DashboardPage({ session }) {
                       <div
                         className={`flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border-2 text-xs font-bold transition-all hover:scale-110 ${
                           onlineUsers.includes(member.id)
-                            ? 'border-green-400 bg-gradient-to-br from-purple-500 to-blue-500 text-white'
+                            ? 'border-green-400 bg-teal-700 text-white'
                             : 'border-white/10 text-gray-500'
                         }`}
                         style={{ backgroundColor: onlineUsers.includes(member.id) ? undefined : 'var(--input-bg)' }}
@@ -307,7 +308,7 @@ export default function DashboardPage({ session }) {
                         <div className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 bg-green-400" style={{ borderColor: 'var(--bg-primary)' }} />
                       ) : null}
                       {member.role === 'leader' ? (
-                        <div className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full border border-purple-300/40 bg-purple-600 text-yellow-300 shadow-sm">
+                        <div className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full border border-teal-300/40 bg-teal-700 text-yellow-300 shadow-sm">
                           <Crown className="h-2 w-2" />
                         </div>
                       ) : null}

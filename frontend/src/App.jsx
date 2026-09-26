@@ -7,12 +7,13 @@ import BetaBanner from './components/BetaBanner';
 const AuthPage = lazy(() => import('./pages/Auth'));
 const DashboardPage = lazy(() => import('./pages/Dashboard'));
 const LandingPage = lazy(() => import('./pages/Landing'));
+const InvitePage = lazy(() => import('./pages/InvitePage'));
 const ResetPasswordPage = lazy(() => import('./pages/ResetPassword'));
 const SettingsPage = lazy(() => import('./pages/Settings'));
 const LegalPage = lazy(() => import('./pages/Legal'));
 
 function PageFallback() {
-  return <div className="flex min-h-screen items-center justify-center bg-[#101820] text-sm text-slate-300">Loading SyncBoard...</div>;
+  return <div className="flex min-h-screen items-center justify-center text-sm" style={{ background: 'var(--bg-primary)', color: 'var(--text-secondary)' }}>Loading SyncBoard...</div>;
 }
 
 function App() {
@@ -28,7 +29,7 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  if (loading) return <div className="flex min-h-screen items-center justify-center bg-[#101820]"><div className="h-8 w-8 animate-spin rounded-full border-4 border-sky-600 border-t-transparent" /></div>;
+  if (loading) return <div className="flex min-h-screen items-center justify-center" style={{ background: 'var(--bg-primary)' }}><div className="h-8 w-8 animate-spin rounded-full border-4 border-[var(--accent)] border-t-transparent" /></div>;
 
   return (
     <Router>
@@ -36,6 +37,7 @@ function App() {
       <Suspense fallback={<PageFallback />}>
         <Routes>
           <Route path="/login" element={<AuthPage session={session} />} />
+          <Route path="/join/:code" element={<InvitePage session={session} />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/privacy" element={<LegalPage policy="privacy" />} />
           <Route path="/terms" element={<LegalPage policy="terms" />} />

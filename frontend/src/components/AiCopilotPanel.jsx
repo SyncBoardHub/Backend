@@ -3,9 +3,9 @@ import { ArrowUp, Bot, Check, LoaderCircle, Sparkles } from 'lucide-react';
 import { apiOrThrow } from '../lib/api';
 
 const starterPrompts = [
-  'What should we focus on next?',
-  'Give me a concise status update for the team.',
-  'Find delivery risks in our current board.',
+  'Summarize the open work.',
+  'Draft a status update for the team.',
+  'Find overdue or blocked work.',
 ];
 
 export default function AiCopilotPanel({ teamId, teamName }) {
@@ -47,8 +47,8 @@ export default function AiCopilotPanel({ teamId, teamName }) {
       <div className="human-ai-card__header">
         <div className="human-ai-card__icon"><Sparkles className="h-4 w-4" /></div>
         <div>
-          <div className="human-eyebrow">Workspace copilot</div>
-          <h2 id="copilot-title">A second pair of eyes for {teamName || 'your team'}</h2>
+          <div className="human-eyebrow">Optional assistant</div>
+          <h2 id="copilot-title">Ask about {teamName || 'this workspace'}</h2>
         </div>
         <span className="human-ai-card__status"><span /> {provider === 'openai' ? 'AI connected' : 'Ready to help'}</span>
       </div>

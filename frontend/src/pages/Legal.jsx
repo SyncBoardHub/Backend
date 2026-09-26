@@ -1,5 +1,7 @@
 import { Link, useParams } from 'react-router-dom';
 import LegalFooter from '../components/LegalFooter';
+import BrandMark from '../components/BrandMark';
+import ThemeToggle from '../components/ThemeToggle';
 import { legalConfigurationComplete, legalDetails } from '../config/legal';
 
 const policyContent = {
@@ -9,7 +11,7 @@ const policyContent = {
     sections: [
       ['Data we process', 'We process your name, email address, account identifier, profile details you choose to provide, and the workspace content you create or upload, such as tasks, notes, files, comments, team memberships, and activity records. We also process limited technical and security logs needed to operate and protect the service.'],
       ['Why we process it', 'We use this data to create and secure accounts, run shared workspaces, show information to the teams you join, respond to support requests, prevent misuse, and meet legal obligations. We do not sell personal data or use it for advertising.'],
-      ['Service providers', 'SyncBoard uses Supabase for authentication, database, and file storage. The optional planning assistant sends only the prompt and relevant workspace context to the configured AI provider when a user chooses to use it. Do not enter confidential personal data into the assistant.'],
+      ['Service providers', 'SyncBoard uses Supabase for authentication, database, and file storage. If email notifications are enabled and configured, notification delivery is sent through Resend using the recipient address and notification content. The optional planning assistant sends only the prompt and relevant workspace context to the configured AI provider when a user chooses to use it. Do not enter confidential personal data into the assistant.'],
       ['Retention and deletion', 'We retain account and workspace data while the account or workspace remains active, then delete or anonymise it within the applicable retention process unless we must keep it for a legal, security, or dispute-related reason. Workspace owners should remove files and project content they no longer need.'],
       ['Your choices and rights', 'You can update your profile in Settings. To request access, correction, deletion, or to withdraw consent where applicable, contact us using the details below. We may need to verify your identity before completing a request.'],
       ['Security and international processing', 'We use reasonable technical and organisational safeguards, but no online service can guarantee absolute security. Providers may process data in countries other than your own, subject to their applicable safeguards and service terms.'],
@@ -51,14 +53,7 @@ const policyContent = {
 };
 
 function BusinessDetails() {
-  if (!legalConfigurationComplete) {
-    return (
-      <section className="legal-warning" aria-label="Deployment information required">
-        <h2>Deployment information required</h2>
-        <p>Before public launch, configure the legal entity name, support email, business address, and HTTPS production domain. This preview intentionally does not invent business details.</p>
-      </section>
-    );
-  }
+  if (!legalConfigurationComplete) return null;
 
   return (
     <section>
@@ -76,8 +71,8 @@ export default function LegalPage({ policy: requestedPolicy }) {
   return (
     <div className="legal-page">
       <header className="legal-header">
-        <Link className="legal-brand" to="/">SyncBoard</Link>
-        <Link className="legal-sign-in" to="/login">Sign in</Link>
+        <Link className="marketing-brand" to="/"><BrandMark /><span>SyncBoard</span></Link>
+        <div className="legal-header__actions"><ThemeToggle /><Link className="legal-sign-in" to="/login">Sign in</Link></div>
       </header>
       <main className="legal-content">
         <p className="legal-eyebrow">Legal</p>
