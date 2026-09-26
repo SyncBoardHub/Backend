@@ -1,117 +1,120 @@
 # SyncBoard
 
-Project collaboration for college teams.
+SyncBoard is a shared project workspace for college teams. It gives students one place to organise tasks, assign responsibility, track deadlines, and keep project work together.
 
-## Tech Stack
+## Product
 
-- **Frontend** – React 19 (Vite) + Tailwind CSS v4 + Framer Motion
-- **Backend** – Node.js, Express, Socket.io
-- **Database & Auth** – Supabase (PostgreSQL + Auth + Storage)
-- **Real-Time** – Socket.io for instant sync & presence tracking
+Group projects often spread work across chats, documents, and personal reminders. SyncBoard brings the working record into one team workspace so members can see what needs attention and who owns it.
 
-## Setup (5 minutes)
+The product is designed for small student teams working on assignments, presentations, research projects, and other collaborative coursework.
 
-### Requirements
-- Node.js 20.19+ (required by the current Vite toolchain)
-- A [Supabase](https://supabase.com) account & project
+## Core Features
 
-### Steps
+- Team workspaces with invite-code based collaboration.
+- Task creation, assignment, statuses, deadlines, timers, and milestones.
+- Notes and shared project files.
+- Search across tasks and notes.
+- In-app notifications and activity history.
+- Real-time task and workspace updates with team presence.
+- GitHub repository connection for viewing project repositories and files.
+- Optional AI assistant for planning and project summaries.
+- Light, dark, and system theme preferences.
+- Profile and workspace settings.
 
-```bash
-# 1. Install backend dependencies
-cd backend && npm install && cd ..
+## Technology Stack
 
-# 2. Install frontend dependencies
-cd frontend && npm install && cd ..
+### Frontend
 
-# 3. Environment Configuration
-# Copy backend/.env.example to backend/.env and set server-only values.
-# SUPABASE_SERVICE_ROLE_KEY must never be exposed to the frontend.
+- React 19
+- Vite
+- Tailwind CSS v4
+- React Router
+- Lucide React for interface icons
+- Framer Motion for selected workspace interactions
+- React Flow for diagrams and visual boards
 
-# Create a .env file in the /frontend directory:
-VITE_SUPABASE_URL=your_supabase_project_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-VITE_API_URL=http://localhost:3000
-VITE_SOCKET_URL=http://localhost:3000
+### Backend
 
-# 4. Database Setup
-# Run schema.sql in Supabase SQL Editor (initial setup)
-# Run migration-v2.sql (notifications + GitHub integration)
-# Run migration-v3.sql (cloud storage)
-# Run migration-v4.sql, migration-v5-files.sql, migration-v6-diagrams.sql
-# Run migration-v7-security.sql (RLS, task timestamps, production hardening)
-# Run migration-v8-remove-gamification.sql (remove XP and achievement data)
-# Run migration-v9-activity.sql (project activity history)
-# Run migration-v10-milestones.sql (milestones and task linkage)
-# Run migration-v11-legal-compliance.sql (policy acceptance timestamps)
+- Node.js
+- Express
+- Socket.IO
+- Helmet for security headers
+- Express Rate Limit for request throttling
+- Multer for controlled file uploads
 
-# 5. Supabase Storage
-# Go to Supabase Dashboard → Storage → Create Bucket
-# Name: team-files  |  Public: false  |  Max size: 50MB
+### Data and Services
 
-# Add `${FRONTEND_URL}/reset-password` to Supabase Auth → URL Configuration → Redirect URLs.
+- Supabase PostgreSQL for application data.
+- Supabase Auth for account authentication.
+- Supabase Storage for private team files.
+- Supabase Row Level Security for database access control.
+- Optional OpenAI API integration through the backend for the AI assistant.
 
-# 6. Start the backend
-cd backend
-npm start
+### Quality and Delivery
 
-# 7. Start the frontend (in a new terminal)
-cd frontend
-npm run dev
+- ESLint for frontend code quality.
+- Node.js built-in test runner for backend contract tests.
+- Vite production builds.
+- GitHub Actions for frontend and backend checks.
+- Ordered SQL migrations for schema changes.
+
+## Architecture
+
+The React frontend handles routing, workspace views, forms, and user interactions. It uses Supabase Auth for the browser session and communicates with the Express API for protected application operations.
+
+The Express server validates authentication, authorisation, team membership, request limits, file operations, and AI requests. Socket.IO provides real-time workspace events and presence updates.
+
+Supabase provides PostgreSQL, authentication, and private file storage. The optional AI integration stays behind the backend so server-only credentials are not exposed to the browser.
+
+```text
+React + Vite frontend
+        |
+        | REST API and authenticated session
+        v
+Express + Socket.IO backend
+        |
+        +--> Supabase Auth
+        +--> Supabase PostgreSQL
+        +--> Supabase Storage
+        +--> Optional AI provider
 ```
 
-For production, set `NODE_ENV=production`, configure `CORS_ORIGINS`, set
-`FRONTEND_URL`, set `ADMIN_USER_IDS`, build the frontend with `npm run build`,
-and serve the built frontend from a host listed in `CORS_ORIGINS`. The backend
-requires `SUPABASE_SERVICE_ROLE_KEY` in production. Configure your platform
-health checks to use `GET /healthz` for process health and `GET /readyz` for
-database readiness.
+## Engineering Highlights
 
-The optional AI copilot uses the server-only `OPENAI_API_KEY` and `OPENAI_MODEL` settings. Without a key, the workspace keeps a useful local prioritization fallback; the key enables contextual planning and summaries through the backend.
+- Protected API routes use authenticated Supabase sessions.
+- Team-scoped operations validate membership before accessing workspace data.
+- Authentication and selected write routes use rate limiting.
+- Server-only credentials are kept in backend environment variables.
+- Database changes are tracked through ordered migrations.
+- Health and readiness endpoints support service monitoring.
+- Error boundaries and structured API handling improve failure recovery.
+- CI runs frontend linting, frontend builds, backend syntax checks, and backend tests.
 
-## Before production launch
+## Repository Structure
 
-Set the production values in `frontend/.env.production` for the HTTPS public domain, legal entity, privacy contact email, business address, and policy version. Run `npm run check:release` from `frontend`; it intentionally fails while any value is a placeholder. Connect the custom domain and configure the same origin in `backend/CORS_ORIGINS`, `backend/FRONTEND_URL`, and Supabase Auth redirect URLs.
-
-The public app currently has no analytics, advertising trackers, third-party embeds, or stock images. Essential browser storage is disclosed by the cookie notice. If non-essential tracking is added later, update the cookie policy and obtain consent before loading it.
-
-The legal pages are implementation templates, not legal advice. Have an India-qualified lawyer review the Privacy Policy, Terms, Cookie Policy, Refund Policy, retention periods, processor contracts, grievance process, and DPDP Act/Rules obligations before launch.
-
-## Features
-
-- ✅ **Authentication** – Secure Login / Register and Forgot Password flow via Supabase Auth.
-- 👥 **Teams** – Create teams, invite members via code, manage permissions (Leader/Member).
-- ✅ **Tasks** – Create, assign, track, start/stop timers, and mark complete. Team Leaders can extend task deadlines.
-- 📊 **Analytics** – Data visualization of completion rates, task status, and member workload.
-- 📅 **Timeline** – Gantt-style visual task scheduling view.
-- 📝 **Notes** – Collaborative notes with auto-save.
-- ☁️ **Files** – Upload and manage team documents via Supabase Cloud Storage.
-- 🔍 **Search** – Full-text search across tasks and notes.
-- 🔔 **Notifications** – In-app real-time notification panel.
-- 🔗 **GitHub Integration** – Browse team repositories and read files directly from the dashboard.
-- ⚡ **Real-Time** – WebSocket sync + presence indicators powered by Socket.io.
-
-## Project Structure
-
-```
-syncboard/
-├── backend/            # Express + Socket.io backend API
-│   ├── server.js       # Main server file
-│   ├── schema.sql      # Initial database schema
-│   ├── migration-v2.sql# Notifications + GitHub
-│   ├── migration-v3.sql# Cloud storage
-│   ├── .env            # Backend environment variables
-│   └── package.json    # Backend dependencies
-├── frontend/           # React 19 (Vite) frontend (previously 'client')
-│   ├── src/
-│   │   ├── components/ # Reusable UI components
-│   │   ├── pages/      # Auth, Dashboard
-│   │   ├── lib/        # API, Supabase, Socket helpers
-│   │   └── main.jsx    # Entry point
-│   └── .env            # Frontend environment variables
-└── README.md           # This file
+```text
+.
+├── frontend/              React client and Vite configuration
+│   ├── src/pages/         Route-level screens
+│   ├── src/features/      Task and team features
+│   ├── src/components/    Shared UI and workspace panels
+│   ├── src/lib/           API, auth, socket, and theme helpers
+│   └── scripts/           Beta and release configuration checks
+├── backend/               Express and Socket.IO server
+│   ├── server.js          API and real-time server
+│   ├── schema.sql         Initial database schema
+│   ├── migration-*.sql    Ordered database migrations
+│   └── test/               Backend contract tests
+├── docs/                  Architecture, beta, and release notes
+└── .github/workflows/     Continuous integration configuration
 ```
 
-## Real-Time Testing
+## Project Status
 
-Open the app in two different browser tabs (or standard/incognito), log in as two different users in the same team, and watch changes sync instantly between them!
+SyncBoard is currently in beta. The main workflows are implemented and checked locally, while deployment configuration, database setup, and user feedback are still part of the beta process.
+
+Beta testing guidance is available in [`docs/beta-testing.md`](docs/beta-testing.md), and the system overview is documented in [`docs/architecture.md`](docs/architecture.md).
+
+## Future Direction
+
+The next improvements will be driven by beta feedback. Areas under consideration include broader automated test coverage, stronger operational monitoring, improved collaboration workflows, and clearer project-level reporting.
