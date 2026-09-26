@@ -2818,7 +2818,7 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3000;
 
 if (require.main === module) {
-  server.listen(PORT, () => console.log(`\n✅ SyncBoard API running at http://localhost:${PORT}\n\nFront-end: React (Vite) in the frontend directory\n☁️  Storage: Supabase Cloud\n🔗 Connected to Supabase: ${process.env.SUPABASE_URL}\n`));
+  server.listen(PORT, '0.0.0.0', () => console.log(`\n✅ SyncBoard API running at http://0.0.0.0:${PORT}\n\nFront-end: React (Vite) in the frontend directory\n☁️  Storage: Supabase Cloud\n🔗 Connected to Supabase: ${process.env.SUPABASE_URL}\n`));
 }
 
 if (require.main === module) {
