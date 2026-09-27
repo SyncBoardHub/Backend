@@ -6,7 +6,7 @@ process.env.NODE_ENV = 'test';
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test-project.supabase.co';
 process.env.SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'test-anon-key';
 
-const { app } = require('../server');
+const { app } = require('../src/server');
 
 function request(path, options = {}) {
   return new Promise((resolve, reject) => {

@@ -2,14 +2,15 @@
   "name": "syncboard-api",
   "version": "1.0.0",
   "description": "SyncBoard API - Project collaboration for college teams",
-  "main": "server.js",
+  "main": "src/server.js",
   "scripts": {
-    "start": "node --unhandled-rejections=strict server.js",
-    "check": "node --check server.js",
+    "start": "node --unhandled-rejections=strict src/server.js",
+    "check": "node --check src/server.js",
     "test": "node --test test/*.test.js",
-    "install-deps": "npm install express socket.io cors uuid"
+    "install-deps": "npm install express socket.io cors uuid redis @socket.io/redis-adapter"
   },
   "dependencies": {
+    "@socket.io/redis-adapter": "^8.3.0",
     "@supabase/supabase-js": "^2.100.0",
     "cors": "^2.8.5",
     "dotenv": "^17.3.1",
@@ -17,6 +18,7 @@
     "express-rate-limit": "^8.3.1",
     "helmet": "^8.1.0",
     "multer": "^2.1.1",
+    "redis": "^6.2.1",
     "socket.io": "^4.7.2",
     "uuid": "^9.0.0"
   }
