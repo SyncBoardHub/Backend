@@ -1,9 +1,0 @@
-{
-  "name": "SyncBoard",
-  "short_name": "SyncBoard",
-  "description": "A shared project workspace for college teams.",
-  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }],
-  "theme_color": "#0f6b85",
-  "background_color": "#f7f8fa",
-  "display": "standalone"
-}
